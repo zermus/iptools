@@ -88,14 +88,14 @@
         <input type="submit" value="Calculate">
     </form>
 
-    <?php
-     function sanitizeInput($input) {
+<?php
+function sanitizeInput($input) {
     // Remove leading/trailing spaces
     $sanitizedInput = trim($input);
 
     // Check if the input is not empty
     if (empty($sanitizedInput)) {
-    return false; // Empty input
+        return false; // Empty input
     }
 
     // Validate as IPv4 CIDR notation
@@ -128,6 +128,14 @@ function calculateSubnetInfo($cidr) {
 
         $usableStartIP = ip2long($networkIP) + 1;
         $usableEndIP = ip2long($broadcastIP) - 1;
+
+        // Adjust for IP address space with subnet mask
+        if ($subnetMask != "255.255.255.255") {
+            $networkIP = long2ip(ip2long($networkIP) & ip2long($subnetMask));
+            $broadcastIP = long2ip(ip2long($networkIP) | ~ip2long($subnetMask));
+            $usableStartIP = ip2long($networkIP) + 1;
+            $usableEndIP = ip2long($broadcastIP) - 1;
+        }
     }
 
     return [
@@ -157,7 +165,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         echo "<p>Invalid input. Please enter a valid IPv4 CIDR notation or IP Address Space with Subnet Mask.</p>";
     }
 }
-     ?>
+?>
 
 </div>
 </body>
