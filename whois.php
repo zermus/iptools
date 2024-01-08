@@ -9,6 +9,9 @@
             font-family: Arial, sans-serif;
             margin: 0;
             padding: 0;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
         }
 
         .container {
@@ -19,6 +22,8 @@
             box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
             background-color: #333333;
             text-align: center;
+            flex: 1;
+            margin-bottom: 20px; /* Adjust the margin to accommodate the footer */
         }
 
         h1 {
@@ -75,9 +80,18 @@
         // Remove unwanted characters
         $sanitizedInput = filter_var($input, FILTER_SANITIZE_STRING);
 
+        // Remove leading/trailing spaces
+        $sanitizedInput = trim($input);
+
+        // Check if the input is not empty
+        if (empty($sanitizedInput)) {
+        return false; // Empty input
+        }
+
         // Validate as either a domain name or IP address
         if (filter_var($sanitizedInput, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME) !== false ||
-            filter_var($sanitizedInput, FILTER_VALIDATE_IP) !== false) {
+            filter_var($sanitizedInput, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false ||
+            filter_var($sanitizedInput, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false) {
             return $sanitizedInput; // Valid domain name or IP address
         } else {
             return false; // Invalid input
@@ -114,6 +128,5 @@
     ?>
 
 </div>
-
 </body>
 </html>
