@@ -23,7 +23,7 @@
             background-color: #333333;
             text-align: center;
             flex: 1;
-            margin-bottom: 20px; /* Adjust the margin to accomodate a footer */
+            margin-bottom: 20px; /* Adjust the margin to accomodate the footer */
         }
 
         h2 {
@@ -103,11 +103,6 @@
         return $input; // Valid IPv4 CIDR notation
     }
 
-    // Validate as IPv6 CIDR notation
-    if (preg_match('/^([0-9a-fA-F]{0,4}:){1,7}(:[0-9a-fA-F]{0,4}){1,7}\/\d{1,3}$/', $input)) {
-        return $input; // Valid IPv6 CIDR notation
-    }
-
     // Validate as IP Address Space with Subnet Mask
     if (preg_match('/^(\d{1,3}\.){3}\d{1,3}\s\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/', $input)) {
         return $input; // Valid IP Address Space with Subnet Mask
@@ -159,7 +154,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         }
         echo "</ul>";
     } else {
-        echo "<p>Invalid input. Please enter a valid IPv4 or IPv6 CIDR notation or IP Address Space with Subnet Mask.</p>";
+        echo "<p>Invalid input. Please enter a valid IPv4 CIDR notation or IP Address Space with Subnet Mask.</p>";
     }
 }
      ?>
