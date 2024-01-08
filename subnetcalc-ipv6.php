@@ -84,7 +84,7 @@
 
     <form method="post">
         <label for="cidr">Enter IPv6 CIDR Notation:</label><br>
-        <input type="text" id="cidr" name="cidr" placeholder="e.g., 2606:4700:4700::1111"><br>
+        <input type="text" id="cidr" name="cidr" placeholder="e.g., 2606:4700::/32"><br>
         <input type="submit" value="Calculate">
     </form>
 
