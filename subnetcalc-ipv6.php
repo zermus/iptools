@@ -23,7 +23,7 @@
             background-color: #333333;
             text-align: center;
             flex: 1;
-            margin-bottom: 20px; /* Adjust the margin to accomodate the footer */
+            margin-bottom: 20px; /* Adjust the margin to accomodate a footer */
         }
 
         h2 {
