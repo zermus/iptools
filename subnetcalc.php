@@ -83,7 +83,7 @@
     <h2>Subnet Calculator</h2>
 
     <form method="post">
-        <label for="cidr">Enter IPv4 or IPv6 CIDR Notation or IP Address with Subnet Mask:</label><br>
+        <label for="cidr">Enter IPv4 CIDR Notation or IPv4 Address with Subnet Mask:</label><br>
         <input type="text" id="cidr" name="cidr" placeholder="e.g., 192.168.1.0/24 or 192.168.1.0 255.255.255.0"><br>
         <input type="submit" value="Calculate">
     </form>
