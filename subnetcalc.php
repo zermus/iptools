@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Subnet Calculator</title>
+    <title>IPv4 Subnet Calculator</title>
     <style>
         body {
             background-color: #292929;
