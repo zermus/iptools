@@ -88,84 +88,78 @@
         <input type="submit" value="Calculate">
     </form>
 
-<?php
-function sanitizeInput($input) {
-    // Remove leading/trailing spaces
-    $sanitizedInput = trim($input);
+        <?php
+        // Function to sanitize user input
+        function sanitizeInput($input) {
+            $sanitizedInput = trim($input);
 
-    // Check if the input is not empty
-    if (empty($sanitizedInput)) {
-        return false; // Empty input
-    }
+            if (empty($sanitizedInput)) {
+                return false;
+            }
 
-    // Validate as IPv4 CIDR notation
-    if (preg_match('/^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/', $input)) {
-        return $input; // Valid IPv4 CIDR notation
-    }
+            if (preg_match('/^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2}|\s\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/', $input)) {
+                return $sanitizedInput;
+            }
 
-    // Validate as IP Address Space with Subnet Mask
-    if (preg_match('/^(\d{1,3}\.){3}\d{1,3}\s\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/', $input)) {
-        return $input; // Valid IP Address Space with Subnet Mask
-    }
-
-    return false; // Invalid input
-}
-
-function calculateSubnetInfo($cidr) {
-    list($ip, $mask) = strpos($cidr, '/') !== false ? explode('/', $cidr) : explode(' ', $cidr);
-
-    if (strpos($cidr, '/') !== false) {
-        $subnetMask = long2ip(-1 << (strpos($ip, ':') === false ? 32 : 128) - (int)$mask);
-        $networkIP = long2ip((ip2long($ip)) & (ip2long($subnetMask)));
-        $broadcastIP = long2ip((ip2long($networkIP)) | (~ip2long($subnetMask)));
-
-        $usableStartIP = ip2long($networkIP) + 1;
-        $usableEndIP = ip2long($broadcastIP) - 1;
-    } else {
-        list($networkIP, $subnetMask) = explode(' ', $cidr);
-
-        $broadcastIP = long2ip((ip2long($networkIP) & ip2long($subnetMask)) | (~ip2long($subnetMask)));
-
-        $usableStartIP = ip2long($networkIP) + 1;
-        $usableEndIP = ip2long($broadcastIP) - 1;
-
-        // Adjust for IP address space with subnet mask
-        if ($subnetMask != "255.255.255.255") {
-            $networkIP = long2ip(ip2long($networkIP) & ip2long($subnetMask));
-            $broadcastIP = long2ip(ip2long($networkIP) | ~ip2long($subnetMask));
-            $usableStartIP = ip2long($networkIP) + 1;
-            $usableEndIP = ip2long($broadcastIP) - 1;
+            return false;
         }
-    }
 
-    return [
-        'Network IP' => $networkIP,
-        'Broadcast IP' => $broadcastIP,
-        'Subnet Mask' => $subnetMask,
-        'Usable Range' => ($usableStartIP <= $usableEndIP) ?
-            long2ip($usableStartIP) . ' - ' . long2ip($usableEndIP) :
-            'N/A'
-    ];
-}
+        // Function to calculate subnet information
+        function calculateSubnetInfo($cidr) {
+            list($ip, $mask) = strpos($cidr, '/') !== false ? explode('/', $cidr) : explode(' ', $cidr);
 
-if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    $cidrNotation = $_POST["cidr"];
-    $sanitizedInput = sanitizeInput($cidrNotation);
+            if (strpos($cidr, '/') !== false) {
+                $subnetMask = long2ip(-1 << (strpos($ip, ':') === false ? 32 : 128) - (int)$mask);
+                $networkIP = long2ip((ip2long($ip)) & (ip2long($subnetMask)));
+                $broadcastIP = long2ip((ip2long($networkIP)) | (~ip2long($subnetMask)));
 
-    if ($sanitizedInput !== false) {
-        $result = calculateSubnetInfo($sanitizedInput);
+                $usableStartIP = ip2long($networkIP) + 1;
+                $usableEndIP = ip2long($broadcastIP) - 1;
+            } else {
+                list($networkIP, $subnetMask) = explode(' ', $cidr);
 
-        echo "<h3>Results for $sanitizedInput:</h3>";
-        echo "<ul>";
-        foreach ($result as $key => $value) {
-            echo "<li><strong>$key:</strong> $value</li>";
+                $broadcastIP = long2ip((ip2long($networkIP) & ip2long($subnetMask)) | (~ip2long($subnetMask)));
+
+                $usableStartIP = ip2long($networkIP) + 1;
+                $usableEndIP = ip2long($broadcastIP) - 1;
+
+                if ($subnetMask != "255.255.255.255") {
+                    $networkIP = long2ip(ip2long($networkIP) & ip2long($subnetMask));
+                    $broadcastIP = long2ip(ip2long($networkIP) | ~ip2long($subnetMask));
+                    $usableStartIP = ip2long($networkIP) + 1;
+                    $usableEndIP = ip2long($broadcastIP) - 1;
+                }
+            }
+
+            return [
+                'Network IP' => $networkIP,
+                'Broadcast IP' => $broadcastIP,
+                'Subnet Mask' => $subnetMask,
+                'Usable Range' => ($usableStartIP <= $usableEndIP) ?
+                    long2ip($usableStartIP) . ' - ' . long2ip($usableEndIP) :
+                    'N/A'
+            ];
         }
-        echo "</ul>";
-    } else {
-        echo "<p>Invalid input. Please enter a valid IPv4 CIDR notation or IP Address Space with Subnet Mask.</p>";
-    }
-}
-?>
+
+        // Handling form submission
+        if ($_SERVER["REQUEST_METHOD"] == "POST") {
+            $cidrNotation = $_POST["cidr"];
+            $sanitizedInput = sanitizeInput($cidrNotation);
+
+            if ($sanitizedInput !== false) {
+                $result = calculateSubnetInfo($sanitizedInput);
+
+                echo "<h3>Results for " . htmlspecialchars($sanitizedInput) . ":</h3>";
+                echo "<ul>";
+                foreach ($result as $key => $value) {
+                    echo "<li><strong>" . htmlspecialchars($key) . ":</strong> " . htmlspecialchars($value) . "</li>";
+                }
+                echo "</ul>";
+            } else {
+                echo "<p class='error-message'>Invalid input. Please enter a valid IPv4 CIDR notation or IP Address Space with Subnet Mask.</p>";
+            }
+        }
+        ?>
 
 </div>
 </body>
