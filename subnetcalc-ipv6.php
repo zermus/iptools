@@ -88,88 +88,88 @@
         <input type="submit" value="Calculate">
     </form>
 
-        <?php
-        function sanitizeInput($input) {
-            $sanitizedInput = filter_var($input, FILTER_SANITIZE_STRING);
-
-            if (empty($sanitizedInput)) {
-                return false; // Empty input
-            }
-
-            return $sanitizedInput; // Return input without additional validation for IPv6 CIDR
+    <?php
+    function sanitizeAndValidateIPv6CIDR($input) {
+        if (empty($input)) {
+            return false;
         }
 
-        function validateIPv6CIDR($cidr) {
-            $parts = explode('/', $cidr);
-            if (count($parts) !== 2) {
-                return false;
+        // Strict validation for IPv6 CIDR format
+        if (preg_match('/^([a-fA-F0-9:]+)\/(\d+)$/', $input, $matches)) {
+            $network = $matches[1];
+            $subnet = $matches[2];
+
+            if (filter_var($network, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false && 
+                filter_var($subnet, FILTER_VALIDATE_INT) !== false && 
+                $subnet >= 0 && $subnet <= 128) {
+                return $input;
             }
+        }
+        return false;
+    }
 
-            $network = $parts[0];
-            $subnet = $parts[1];
+    function calculateSubnetInfo($cidr) {
+        $parts = explode('/', $cidr);
+        $network = $parts[0];
+        $subnet = $parts[1];
 
-            if (filter_var($network, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false && $subnet >= 0 && $subnet <= 128) {
-                return true; // Valid IPv6 CIDR notation
-            }
-
-            return false; // Invalid input
+        $network_bin = inet_pton($network);
+        if ($network_bin === false) {
+            return false; // Handle inet_pton error
         }
 
-        function calculateSubnetInfo($cidr) {
-            $parts = explode('/', $cidr);
-            $network = $parts[0];
-            $subnet = $parts[1];
+        $subnet_mask = str_repeat('f', $subnet >> 2);
+        $remainder = $subnet % 4;
 
-            if (validateIPv6CIDR($cidr)) {
-                $network_bin = inet_pton($network);
-                $subnet_mask = str_repeat('f', $subnet >> 2);
-                $remainder = $subnet % 4;
+        if ($remainder > 0) {
+            $subnet_mask .= dechex(8 - $remainder);
+        }
+        $subnet_mask = str_pad($subnet_mask, 32, '0');
 
-                if ($remainder > 0) {
-                    $subnet_mask .= dechex(8 - $remainder);
+        $subnet_mask_bin = pack("H*", $subnet_mask);
+
+        $start = $network_bin & $subnet_mask_bin;
+        $end = $network_bin | ~$subnet_mask_bin;
+
+        $start_ip = inet_ntop($start);
+        $end_ip = inet_ntop($end);
+
+        if ($start_ip === false || $end_ip === false) {
+            return false; // Handle inet_ntop error
+        }
+
+        return [
+            'Received Input' => htmlspecialchars($cidr),
+            'Network' => htmlspecialchars($network),
+            'Subnet' => htmlspecialchars($subnet),
+            'Usable Range' => htmlspecialchars($start_ip) . ' - ' . htmlspecialchars($end_ip),
+        ];
+    }
+
+    if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["cidr"])) {
+        $cidrNotation = $_POST["cidr"];
+        $validatedInput = sanitizeAndValidateIPv6CIDR($cidrNotation);
+
+        if ($validatedInput !== false) {
+            $result = calculateSubnetInfo($validatedInput);
+
+            if ($result !== false) {
+                echo "<h3>Results for " . $result['Received Input'] . ":</h3>";
+                echo "<ul>";
+                foreach ($result as $key => $value) {
+                    echo "<li><strong>" . $key . ":</strong> " . $value . "</li>";
                 }
-                $subnet_mask = str_pad($subnet_mask, 32, '0');
-
-                $subnet_mask_bin = pack("H*", $subnet_mask);
-
-                $start = $network_bin & $subnet_mask_bin;
-                $end = $network_bin | ~$subnet_mask_bin;
-
-                return [
-                    'Received Input' => htmlspecialchars($cidr),
-                    'Network' => htmlspecialchars($network),
-                    'Subnet' => htmlspecialchars($subnet),
-                    'Usable Range' => htmlspecialchars(inet_ntop($start)) . ' - ' . htmlspecialchars(inet_ntop($end)),
-                ];
-            }
-
-            return false; // Invalid input
-        }
-
-        if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["cidr"])) {
-            $cidrNotation = $_POST["cidr"];
-            $sanitizedInput = sanitizeInput($cidrNotation);
-
-            if ($sanitizedInput !== false && validateIPv6CIDR($sanitizedInput)) {
-                $result = calculateSubnetInfo($sanitizedInput);
-
-                if ($result !== false) {
-                    echo "<h3>Results for " . $result['Received Input'] . ":</h3>";
-                    echo "<ul>";
-                    foreach ($result as $key => $value) {
-                        echo "<li><strong>" . htmlspecialchars($key) . ":</strong> " . $value . "</li>";
-                    }
-                    echo "</ul>";
-                } else {
-                    echo "<p>Invalid input. Please enter a valid IPv6 CIDR notation.</p>";
-                }
+                echo "</ul>";
             } else {
-                echo "<p>Invalid input. Please enter a valid IPv6 CIDR notation.</p>";
+                echo "<p class='error-message'>Invalid input. Please enter a valid IPv6 CIDR notation.</p>";
             }
         } else {
-            echo "<p>No input received.</p>";
+            echo "<p class='error-message'>Invalid input. Please enter a valid IPv6 CIDR notation.</p>";
         }
-        ?>
+    } else {
+        echo "<p>No input received.</p>";
+    }
+    ?>
 
 </div>
 </body>
