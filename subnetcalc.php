@@ -92,44 +92,30 @@
         // Function to sanitize user input
         function sanitizeInput($input) {
             $sanitizedInput = trim($input);
-
             if (empty($sanitizedInput)) {
                 return false;
             }
-
-            if (preg_match('/^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2}|\s\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/', $input)) {
+            // Updated Regular Expression for more flexibility
+            if (preg_match('/^(\d{1,3}(\.\d{1,3}){3})(\/\d{1,2}|\s\d{1,3}(\.\d{1,3}){3})$/', $input)) {
                 return $sanitizedInput;
             }
-
             return false;
         }
 
         // Function to calculate subnet information
         function calculateSubnetInfo($cidr) {
-            list($ip, $mask) = strpos($cidr, '/') !== false ? explode('/', $cidr) : explode(' ', $cidr);
-
             if (strpos($cidr, '/') !== false) {
-                $subnetMask = long2ip(-1 << (strpos($ip, ':') === false ? 32 : 128) - (int)$mask);
-                $networkIP = long2ip((ip2long($ip)) & (ip2long($subnetMask)));
-                $broadcastIP = long2ip((ip2long($networkIP)) | (~ip2long($subnetMask)));
-
-                $usableStartIP = ip2long($networkIP) + 1;
-                $usableEndIP = ip2long($broadcastIP) - 1;
+                list($ip, $mask) = explode('/', $cidr);
+                $subnetMask = long2ip(-1 << (32 - (int)$mask));
             } else {
-                list($networkIP, $subnetMask) = explode(' ', $cidr);
-
-                $broadcastIP = long2ip((ip2long($networkIP) & ip2long($subnetMask)) | (~ip2long($subnetMask)));
-
-                $usableStartIP = ip2long($networkIP) + 1;
-                $usableEndIP = ip2long($broadcastIP) - 1;
-
-                if ($subnetMask != "255.255.255.255") {
-                    $networkIP = long2ip(ip2long($networkIP) & ip2long($subnetMask));
-                    $broadcastIP = long2ip(ip2long($networkIP) | ~ip2long($subnetMask));
-                    $usableStartIP = ip2long($networkIP) + 1;
-                    $usableEndIP = ip2long($broadcastIP) - 1;
-                }
+                list($ip, $subnetMask) = explode(' ', $cidr);
             }
+
+            $networkIP = long2ip(ip2long($ip) & ip2long($subnetMask));
+            $broadcastIP = long2ip(ip2long($networkIP) | ~ip2long($subnetMask));
+
+            $usableStartIP = ip2long($networkIP) + 1;
+            $usableEndIP = ip2long($broadcastIP) - 1;
 
             return [
                 'Network IP' => $networkIP,
