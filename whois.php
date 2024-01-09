@@ -75,57 +75,51 @@
         <input type="submit" value="Lookup">
     </form>
 
-    <?php
-    function sanitizeInput($input) {
-        // Remove unwanted characters
-        $sanitizedInput = filter_var($input, FILTER_SANITIZE_STRING);
+        <?php
+        function sanitizeInput($input) {
+            // Remove leading/trailing spaces
+            $sanitizedInput = trim($input);
 
-        // Remove leading/trailing spaces
-        $sanitizedInput = trim($input);
+            // Check if the input is not empty after trimming
+            if (empty($sanitizedInput)) {
+                return false; // Empty input
+            }
 
-        // Check if the input is not empty
-        if (empty($sanitizedInput)) {
-        return false; // Empty input
+            // Remove unwanted characters after trimming
+            $sanitizedInput = filter_var($sanitizedInput, FILTER_SANITIZE_STRING);
+
+            // Validate as either a domain name or IP address
+            if (filter_var($sanitizedInput, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME) !== false ||
+                filter_var($sanitizedInput, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false ||
+                filter_var($sanitizedInput, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false) {
+                return $sanitizedInput; // Valid domain name or IP address
+            } else {
+                return false; // Invalid input
+            }
         }
 
-        // Validate as either a domain name or IP address
-        if (filter_var($sanitizedInput, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME) !== false ||
-            filter_var($sanitizedInput, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false ||
-            filter_var($sanitizedInput, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false) {
-            return $sanitizedInput; // Valid domain name or IP address
-        } else {
-            return false; // Invalid input
-        }
-    }
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            if (isset($_POST['domain'])) {
+                $sanitizedDomain = sanitizeInput($_POST['domain']);
+                if ($sanitizedDomain !== false) {
+                    $domain = escapeshellarg($sanitizedDomain); // Escape shell arguments
 
-    function isValidDomain($domain) {
-        // Simple validation to allow only alphanumeric characters, dots, and hyphens
-        return preg_match('/^[a-zA-Z0-9.-]+$/', $domain);
-    }
+                    $output = shell_exec("whois $domain 2>&1"); // Execute the whois command
 
-    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-        if (isset($_POST['domain'])) {
-            $sanitizedDomain = sanitizeInput($_POST['domain']);
-            if ($sanitizedDomain !== false) {
-                $domain = $sanitizedDomain;
-                $domain = escapeshellcmd($domain); // Escape shell metacharacters
-
-                $output = shell_exec("whois $domain 2>&1"); // Execute the whois command
-
-                if ($output) {
-                    echo "<h2>WHOIS Information for $domain:</h2>";
-                    echo "<pre>$output</pre>";
+                    if ($output !== null) {
+                        echo "<h2>WHOIS Information for $sanitizedDomain:</h2>";
+                        echo "<pre>" . htmlspecialchars($output) . "</pre>";
+                    } else {
+                        echo "<p>No WHOIS information found for $sanitizedDomain.</p>";
+                    }
                 } else {
-                    echo "<p>No WHOIS information found for $domain.</p>";
+                    echo "<p>Invalid domain name or IP address.</p>";
                 }
             } else {
-                echo "<p>Invalid domain name or IP address.</p>";
+                echo "<p>Please enter a domain name or IP address.</p>";
             }
-        } else {
-            echo "<p>Please enter a domain name or IP address.</p>";
         }
-    }
-    ?>
+        ?>
 
 </div>
 </body>
