@@ -41,17 +41,22 @@
 
         input[type="text"],
         input[type="submit"] {
-            padding: 8px;
+            padding: 8px; 15px; /* Provides padding around the text */
             border-radius: 4px;
             border: 1px solid #444444;
             background-color: #555555;
             color: white;
             margin-bottom: 10px;
+            cursor: pointer;
+            transition: background-color 0.3s ease; /* Smooth transition for hover effect */
         }
 
-        input[type="submit"] {
-            width: 100%;
-            cursor: pointer;
+        input[type="submit"]:hover {
+            background-color: #777777; /* Lighter color on hover */
+        }
+
+        input[type="text"] {
+            width: calc(100% - 22px);
         }
 
         pre {
@@ -107,7 +112,7 @@
                     echo "<p>No WHOIS information found for $validatedDomain.</p>";
                 }
             } else {
-                echo "<p>Invalid domain name or IP address.</p>";
+                echo "<p class='error-message'>Invalid domain name or IP address.</p>";
             }
         } else {
             echo "<p>Please enter a domain name or IP address.</p>";
