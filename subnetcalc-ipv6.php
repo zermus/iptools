@@ -190,8 +190,6 @@ SOFTWARE.
         } else {
             echo "<p class='error-message'>Invalid input. Please enter a valid IPv6 CIDR notation.</p>";
         }
-    } else {
-        echo "<p>No input received.</p>";
     }
     ?>
 
