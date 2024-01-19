@@ -4,3 +4,4 @@ These are completely written from scratch to be functional with modern PHP.
 
 # REQUIREMENTS
 WHOIS requires the WHOIS binary to be installed on the server and accessable from the web user.
+NSLOOKUP requires NSLOOKUP binary, commonly found in bind-utils.
