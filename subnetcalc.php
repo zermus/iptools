@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- SubnetCalc v0.5 -->
 <!--
 MIT License
 
@@ -46,7 +47,7 @@ SOFTWARE.
             background-color: #333333;
             text-align: center;
             flex: 1;
-            margin-bottom: 20px; /* Adjust the margin to accomodate a footer */
+            margin-bottom: 20px; /* Adjust the margin to accommodate a footer */
         }
 
         h2 {
@@ -131,8 +132,10 @@ SOFTWARE.
             if (strpos($cidr, '/') !== false) {
                 list($ip, $mask) = explode('/', $cidr);
                 $subnetMask = long2ip(-1 << (32 - (int)$mask));
+                $maskLength = $mask;
             } else {
                 list($ip, $subnetMask) = explode(' ', $cidr);
+                $maskLength = 32 - log((ip2long($subnetMask) ^ 0xFFFFFFFF) + 1, 2);
             }
 
             $networkIP = long2ip(ip2long($ip) & ip2long($subnetMask));
@@ -145,6 +148,7 @@ SOFTWARE.
                 'Network IP' => $networkIP,
                 'Broadcast IP' => $broadcastIP,
                 'Subnet Mask' => $subnetMask,
+                'Subnet Mask Length' => '/' . $maskLength,
                 'Usable Range' => ($usableStartIP <= $usableEndIP) ?
                     long2ip($usableStartIP) . ' - ' . long2ip($usableEndIP) :
                     'N/A'
