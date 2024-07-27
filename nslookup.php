@@ -22,6 +22,9 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 -->
+<?php
+$dnsServer = '8.8.8.8'; // Set your preferred DNS server here
+?>
 <html lang="en">
 <head>
     <title>NSLookup Tool</title>
@@ -140,9 +143,10 @@ Fa-f]{1,4}:){1}((:[0-9A-Fa-f]{1,4}){1,6}|:((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?
         // Use escapeshellarg to prevent command injection
         $queryType = escapeshellarg($queryType);
         $sanitizedDomain = escapeshellarg($sanitizedDomain);
+        $dnsServer = escapeshellarg($dnsServer);
 
-        // Execute nslookup
-        $output = shell_exec("nslookup -type=$queryType $sanitizedDomain");
+        // Execute nslookup with the specified DNS server
+        $output = shell_exec("nslookup -type=$queryType $sanitizedDomain $dnsServer");
 
         // Escape and display the output
         echo "<pre>" . htmlspecialchars($output) . "</pre>";
