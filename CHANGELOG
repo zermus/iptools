@@ -7,3 +7,9 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 - Initial public pre-release.
+
+## [0.0.6] - 07-27-2024
+
+### nslookup.php
+
+- Added configurable to set DNS server for queries
