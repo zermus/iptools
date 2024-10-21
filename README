@@ -2,6 +2,21 @@
 HTML PHP tools that should just work.  Basic santization input is provided.  Feel free to use or reach out if updates are needed.  These are loosely based on older scripts of the same type that have become depreciated over the years.
 These are completely written from scratch to be functional with modern PHP.
 
+# NSLOOKUP
+NS Lookup utility with the ability to set the PHP script's DNS server.
+
+# IPv4 Subnet Calculator
+Displays IPv4 subnet information based on CIDR notation or IP and Subnet Mask input.
+
+# IPv6 Subnet Calculator
+Displays IPv4 subnet information based on CIDR notation input.
+
+# IPv6 Unique Local Address Generator
+Randomizes a ULA subnet for you based on input size.
+
+# WHOIS
+DNS or IP WHOIS lookup.
+
 # REQUIREMENTS
 WHOIS requires the WHOIS binary to be installed on the server and accessable from the web user.
 NSLOOKUP requires NSLOOKUP binary, commonly found in bind-utils.
