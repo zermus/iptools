@@ -32,21 +32,14 @@ SOFTWARE.
             font-family: Arial, sans-serif;
             margin: 0;
             padding: 0;
-            display: flex;
-            flex-direction: column;
-            min-height: 100vh;
+            text-align: center; /* Center all content */
         }
 
         .container {
-            width: 60%;
-            margin: 0 auto;
+            display: inline-block;
             padding: 20px;
             border-radius: 8px;
-            box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
             background-color: #333333;
-            text-align: center;
-            flex: 1;
-            margin-bottom: 20px; /* Adjust the margin to accomodate a footer */
         }
 
         h2 {
@@ -63,52 +56,85 @@ SOFTWARE.
         }
 
         input[type="text"],
-        input[type="submit"] {
-            padding: 8px 15px; /* Adjusted padding for better appearance */
+        input[type="submit"],
+        select {
+            padding: 8px 15px;
             border-radius: 4px;
             border: 1px solid #444444;
             background-color: #555555;
             color: white;
             margin-bottom: 10px;
-            cursor: pointer;
-            transition: background-color 0.3s ease; /* Smooth transition for hover effect */
+            transition: background-color 0.3s ease;
+            text-align: center; /* Center text inside inputs */
+            width: auto;
+            display: inline-block;
+        }
+
+        input[type="text"]:hover,
+        input[type="text"]:focus,
+        select:hover,
+        select:focus {
+            background-color: #444444;
+            border-color: #0000AA;
+            outline: none;
         }
 
         input[type="submit"]:hover {
-            background-color: #777777; /* Lighter color on hover */
+            background-color: #777777;
         }
 
-        input[type="text"] {
-            width: calc(100% - 22px);
+        .output-item {
+            margin-bottom: 15px;
+            text-align: center;
         }
 
-        ul {
-            list-style: none;
-            padding: 0;
-        }
-
-        li {
+        .output-item label {
+            display: block;
             margin-bottom: 5px;
         }
 
-        li strong {
-            margin-right: 5px;
+        table {
+            margin: 0 auto;
+            border-collapse: collapse;
+            width: auto;
         }
 
-        p.error-message {
-            color: #ff3333;
-            font-weight: bold;
+        table th,
+        table td {
+            border: 1px solid #555555;
+            padding: 8px 15px;
+            text-align: center;
+        }
+
+        table th {
+            background-color: #444444;
+        }
+
+        @media screen and (max-width: 600px) {
+            input[type="text"],
+            input[type="submit"],
+            select {
+                width: 100%;
+            }
+
+            table th,
+            table td {
+                font-size: 12px;
+                padding: 6px 10px;
+            }
         }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h2>Subnet Calculator</h2>
+    <h2>IPv6 Subnet Calculator</h2>
 
     <form method="post">
-        <label for="cidr">Enter IPv6 CIDR Notation:</label><br>
-        <input type="text" id="cidr" name="cidr" placeholder="e.g., 2606:4700::/32"><br>
+        <label for="cidr">Enter IPv6 CIDR Notation:</label>
+        <input type="text" id="cidr" name="cidr" placeholder="e.g., 2606:4700::/32" size="43" maxlength="43">
+        <label><input type="checkbox" name="display_full" value="1"> Display IPv6 addresses in full notation</label>
+        <label><input type="checkbox" name="calculate_subnets" value="1"> Calculate subnets within the usable range</label>
         <input type="submit" value="Calculate">
     </form>
 
@@ -118,13 +144,11 @@ SOFTWARE.
             return false;
         }
 
-        // Strict validation for IPv6 CIDR format
-        if (preg_match('/^([a-fA-F0-9:]+)\/(\d+)$/', $input, $matches)) {
+        if (preg_match('/^([a-fA-F0-9:]+)\/(\d{1,3})$/', trim($input), $matches)) {
             $network = $matches[1];
-            $subnet = $matches[2];
+            $subnet = (int)$matches[2];
 
-            if (filter_var($network, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false &&
-                filter_var($subnet, FILTER_VALIDATE_INT) !== false &&
+            if (filter_var($network, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) &&
                 $subnet >= 0 && $subnet <= 128) {
                 return $input;
             }
@@ -132,58 +156,91 @@ SOFTWARE.
         return false;
     }
 
-    function calculateSubnetInfo($cidr) {
-        $parts = explode('/', $cidr);
-        $network = $parts[0];
-        $subnet = $parts[1];
+    function expand_ipv6_address($ip) {
+        $binary = inet_pton($ip);
+        $hex = unpack('H*', $binary)[1];
+        return implode(':', str_split($hex, 4));
+    }
+
+    function format_large_number($number_str) {
+        return number_format($number_str, 0, '', ',');
+    }
+
+    function calculateSubnetInfo($cidr, $display_full) {
+        list($network, $subnet) = explode('/', $cidr);
+        $subnet = (int)$subnet;
 
         $network_bin = inet_pton($network);
         if ($network_bin === false) {
-            return false; // Handle inet_pton error
+            return false;
         }
 
-        $subnet_mask = str_repeat('f', $subnet >> 2);
-        $remainder = $subnet % 4;
-
-        if ($remainder > 0) {
-            $subnet_mask .= dechex(8 - $remainder);
+        $subnet_mask_bin = str_repeat("\xff", $subnet >> 3);
+        if ($subnet % 8) {
+            $subnet_mask_bin .= chr((0xff << (8 - ($subnet % 8))) & 0xff);
         }
-        $subnet_mask = str_pad($subnet_mask, 32, '0');
+        $subnet_mask_bin = str_pad($subnet_mask_bin, 16, "\x00");
 
-        $subnet_mask_bin = pack("H*", $subnet_mask);
+        $start_bin = $network_bin & $subnet_mask_bin;
+        $end_bin = $network_bin | ~$subnet_mask_bin;
 
-        $start = $network_bin & $subnet_mask_bin;
-        $end = $network_bin | ~$subnet_mask_bin;
+        $start_ip = inet_ntop($start_bin);
+        $end_ip = inet_ntop($end_bin);
 
-        $start_ip = inet_ntop($start);
-        $end_ip = inet_ntop($end);
-
-        if ($start_ip === false || $end_ip === false) {
-            return false; // Handle inet_ntop error
+        if ($display_full) {
+            $network = expand_ipv6_address($network);
+            $start_ip = expand_ipv6_address($start_ip);
+            $end_ip = expand_ipv6_address($end_ip);
         }
 
         return [
-            'Received Input' => htmlspecialchars($cidr),
-            'Network' => htmlspecialchars($network),
-            'Subnet' => htmlspecialchars($subnet),
-            'Usable Range' => htmlspecialchars($start_ip) . ' - ' . htmlspecialchars($end_ip),
+            'Received Input' => $cidr,
+            'Network' => $network,
+            'Subnet' => '/' . $subnet,
+            'Usable Range' => $start_ip . ' - ' . $end_ip,
+            'Subnet Prefix Length' => $subnet,
         ];
     }
 
     if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["cidr"])) {
         $cidrNotation = $_POST["cidr"];
+        $display_full = isset($_POST['display_full']);
+        $calculate_subnets = isset($_POST['calculate_subnets']);
+
         $validatedInput = sanitizeAndValidateIPv6CIDR($cidrNotation);
 
         if ($validatedInput !== false) {
-            $result = calculateSubnetInfo($validatedInput);
+            $result = calculateSubnetInfo($validatedInput, $display_full);
 
             if ($result !== false) {
-                echo "<h3>Results for " . $result['Received Input'] . ":</h3>";
-                echo "<ul>";
+                echo "<div class='result-section'>";
+
                 foreach ($result as $key => $value) {
-                    echo "<li><strong>" . $key . ":</strong> " . $value . "</li>";
+                    if ($key != 'Subnet Prefix Length') {
+                        $size = strlen($value);
+                        echo "<div class='output-item'>";
+                        echo "<label>" . htmlspecialchars($key) . ":</label>";
+                        echo "<input type='text' value='" . htmlspecialchars($value) . "' size='$size' readonly>";
+                        echo "</div>";
+                    }
                 }
-                echo "</ul>";
+
+                if ($calculate_subnets) {
+                    $original_subnet = (int)$result['Subnet Prefix Length'];
+                    echo "<div class='result-section'>";
+                    echo "<h3>Subnets within the Usable Range:</h3>";
+                    echo "<table>";
+                    echo "<tr><th>Subnet Size</th><th>Number of Subnets</th></tr>";
+                    for ($smaller_subnet = $original_subnet + 1; $smaller_subnet <= 128; $smaller_subnet++) {
+                        $num_subnets = gmp_pow(2, $smaller_subnet - $original_subnet);
+                        $formatted_num_subnets = format_large_number(gmp_strval($num_subnets));
+                        echo "<tr><td>/$smaller_subnet</td><td>$formatted_num_subnets</td></tr>";
+                    }
+                    echo "</table>";
+                    echo "</div>";
+                }
+
+                echo "</div>";
             } else {
                 echo "<p class='error-message'>Invalid input. Please enter a valid IPv6 CIDR notation.</p>";
             }
@@ -192,7 +249,7 @@ SOFTWARE.
         }
     }
     ?>
-
 </div>
+
 </body>
 </html>
