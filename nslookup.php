@@ -1,4 +1,3 @@
-<!DOCTYPE html>
 <!--
 MIT License
 
@@ -87,6 +86,7 @@ if (count($_SESSION['nslookup_requests']) >= $maxRequests) {
     $rateLimitExceeded = false;
 }
 ?>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <title>NSLookup Tool</title>
