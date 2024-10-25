@@ -1,4 +1,3 @@
-<!DOCTYPE html>
 <!--
 MIT License
 
@@ -86,6 +85,7 @@ if (count($_SESSION['ping_requests']) >= $maxRequests) {
     $rateLimitExceeded = false;
 }
 ?>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
