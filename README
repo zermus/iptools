@@ -1,9 +1,15 @@
 # IPTOOLS
-HTML PHP tools that should just work.  Basic santization input is provided.  Feel free to use or reach out if updates are needed.  These are loosely based on older scripts of the same type that have become depreciated over the years.
+HTML PHP tools that should just work.  Basic santization input and security is provided.  Feel free to use or reach out if updates are needed.  These are very loosely based on older PHP scripts of the same type that have become depreciated over the years.
 These are completely written from scratch to be functional with modern PHP.
 
 # NSLOOKUP
 NS Lookup utility with the ability to set the PHP script's DNS server.
+
+# PING
+Ping utility.
+
+# TRACEROUTE
+Traceroute utility.
 
 # IPv4 Subnet Calculator
 Displays IPv4 subnet information based on CIDR notation or IP and Subnet Mask input.
