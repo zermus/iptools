@@ -12,4 +12,20 @@ All notable changes to this project will be documented in this file.
 
 ### nslookup.php
 
-- Added configurable to set DNS server for queries
+- Added configurable to set DNS server for queries.
+
+## [0.0.8] - 10-25-2024
+
+### nslookup.php
+### ping.php
+### subnetcalc-ipv6.php
+### subnetcalc.php
+### traceroute.php
+### whois.php
+
+- UI improvements.
+
+- Added security features:
+* Content Security Policy for mitigating risks like Cross-Site Scripting (XSS).
+* Rate Limiting options.
+* Optional Logging of queries to a logfile for auditing.
