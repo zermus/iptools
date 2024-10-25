@@ -86,9 +86,6 @@ if (count($_SESSION['traceroute_requests']) >= $maxRequests) {
 }
 ?>
 <!DOCTYPE html>
-<!--
-Copyright (c) 2024 Cody Gee
--->
 <html lang="en">
 <head>
     <meta charset="UTF-8">
