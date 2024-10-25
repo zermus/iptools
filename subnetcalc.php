@@ -1,4 +1,3 @@
-<!DOCTYPE html>
 <!--
 MIT License
 
@@ -87,9 +86,6 @@ if (count($_SESSION['subnet_requests']) >= $maxRequests) {
 }
 ?>
 <!DOCTYPE html>
-<!--
-Copyright (c) 2024 Cody Gee
--->
 <html lang="en">
 <head>
     <title>IPv4 Subnet Calculator</title>
