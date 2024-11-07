@@ -296,20 +296,40 @@ if (count($_SESSION['subnet_requests']) >= $maxRequests) {
      * @return string|false Returns sanitized input if valid, false otherwise.
      */
     function sanitizeAndValidateIPv6CIDR($input) {
-        if (empty($input)) {
-            return false;
+        // Trim whitespace from beginning and end
+        $sanitizedInput = trim($input);
+
+        // Replace multiple whitespace characters with a single space
+        $sanitizedInput = preg_replace('/\s+/', ' ', $sanitizedInput);
+
+        // Check if input is empty after trimming
+        if (empty($sanitizedInput)) {
+            return false; // Empty input
         }
 
-        if (preg_match('/^([a-fA-F0-9:]+)\/(\d{1,3})$/', trim($input), $matches)) {
-            $network = $matches[1];
+        // CIDR Notation Validation using regex
+        // Pattern explanation:
+        // ^ - start of string
+        // ([a-fA-F0-9:]+) - one or more hexadecimal characters and colons (IPv6 address)
+        // \/ - literal slash
+        // (\d{1,3}) - subnet mask (1 to 3 digits)
+        // $ - end of string
+        if (preg_match('/^([a-fA-F0-9:]+)\/(\d{1,3})$/', $sanitizedInput, $matches)) {
+            $ip = $matches[1];
             $subnet = (int)$matches[2];
 
-            if (filter_var($network, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) &&
-                $subnet >= 0 && $subnet <= 128) {
-                return $input;
+            // Validate subnet mask range for IPv6
+            if ($subnet < 0 || $subnet > 128) {
+                return false; // Invalid subnet mask
+            }
+
+            // Validate IPv6 address
+            if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+                return $sanitizedInput;
             }
         }
-        return false;
+
+        return false; // Invalid input
     }
 
     /**
@@ -320,8 +340,13 @@ if (count($_SESSION['subnet_requests']) >= $maxRequests) {
      */
     function expand_ipv6_address($ip) {
         $binary = inet_pton($ip);
+        if ($binary === false) {
+            return $ip; // Return original if conversion fails
+        }
         $hex = unpack('H*', $binary)[1];
-        return implode(':', str_split($hex, 4));
+        // Split into 8 groups of 4 hexadecimal digits
+        $segments = str_split($hex, 4);
+        return implode(':', $segments);
     }
 
     /**
@@ -351,32 +376,87 @@ if (count($_SESSION['subnet_requests']) >= $maxRequests) {
         }
 
         // Create subnet mask
-        $subnet_mask_bin = str_repeat("\xff", $subnet >> 3);
-        if ($subnet % 8) {
-            $subnet_mask_bin .= chr((0xff << (8 - ($subnet % 8))) & 0xff);
+        // For IPv6, subnet masks are represented by the prefix length (e.g., /64)
+        // Therefore, no need to create a binary subnet mask; calculations are based on prefix length
+
+        // Calculate network address
+        // Using PHP's BCMath or GMP is necessary for handling large IPv6 addresses
+        // However, for simplicity, we'll use existing functions to calculate start and end IPs
+
+        // Calculate the number of bits for the host part
+        $host_bits = 128 - $subnet;
+
+        // Convert network address to binary
+        $network_hex = unpack('H*', $network_bin)[1];
+        $network_bin_str = hex2bin($network_hex); // Binary string
+
+        // Calculate the starting and ending addresses
+        // For IPv6, it's complex due to the 128-bit addressing, but we'll represent them in hexadecimal
+
+        // Start IP is the network address
+        $start_ip = inet_ntop($network_bin);
+
+        // To calculate the end IP, we need to set the host bits to 1
+        // This requires bit manipulation beyond PHP's built-in capabilities for 128-bit numbers
+        // Therefore, we'll use BCMath or GMP for precise calculations
+
+        // Convert IPv6 addresses to integers using GMP
+        $network_int = inet6_to_int($network);
+        if ($network_int === false) {
+            return false;
         }
-        $subnet_mask_bin = str_pad($subnet_mask_bin, 16, "\x00");
 
-        // Calculate network and broadcast addresses
-        $start_bin = $network_bin & $subnet_mask_bin;
-        $end_bin = $network_bin | ~$subnet_mask_bin;
+        // Calculate the broadcast address by adding (2^host_bits - 1)
+        $end_int = gmp_add($network_int, gmp_sub(gmp_pow(2, $host_bits), 1));
 
-        $start_ip = inet_ntop($start_bin);
-        $end_ip = inet_ntop($end_bin);
+        $end_ip = int_to_inet6(gmp_strval($end_int));
 
         if ($display_full) {
-            $network = expand_ipv6_address($network);
-            $start_ip = expand_ipv6_address($start_ip);
-            $end_ip = expand_ipv6_address($end_ip);
+            $network_full = expand_ipv6_address($start_ip);
+            $end_ip_full = expand_ipv6_address($end_ip);
+        } else {
+            $network_full = $start_ip;
+            $end_ip_full = $end_ip;
         }
 
         return [
             'Received Input' => $cidr,
-            'Network' => $network,
+            'Network' => $network_full,
             'Subnet' => '/' . $subnet,
             'Usable Range' => $start_ip . ' - ' . $end_ip,
             'Subnet Prefix Length' => $subnet,
         ];
+    }
+
+    /**
+     * Function to convert IPv6 address to integer using GMP.
+     *
+     * @param string $inet6 IPv6 address.
+     * @return GMP|false GMP number representing the IPv6 address or false on failure.
+     */
+    function inet6_to_int($inet6) {
+        $packed = inet_pton($inet6);
+        if ($packed === false) {
+            return false;
+        }
+        $unpacked = unpack('H*hex', $packed);
+        $hex = $unpacked['hex'];
+        return gmp_init($hex, 16);
+    }
+
+    /**
+     * Function to convert integer to IPv6 address using GMP.
+     *
+     * @param string $int_str GMP number as string.
+     * @return string|false IPv6 address or false on failure.
+     */
+    function int_to_inet6($int_str) {
+        // Convert to hexadecimal, pad to 32 characters
+        $hex = gmp_strval(gmp_init($int_str, 10), 16);
+        $hex = str_pad($hex, 32, '0', STR_PAD_LEFT);
+        // Pack into binary and convert to IPv6
+        $packed = pack('H*', $hex);
+        return inet_ntop($packed);
     }
 
     /**
@@ -405,7 +485,7 @@ if (count($_SESSION['subnet_requests']) >= $maxRequests) {
     if ($_SERVER["REQUEST_METHOD"] == "POST") {
         if (isset($_POST["cidr"])) {
             // Check if rate limit is exceeded
-            if (isRateLimitExceeded()) {
+            if ($rateLimitExceeded) {
                 echo "<p class='error-message'>Rate limit exceeded. Please try again later.</p>";
                 exit;
             }
@@ -430,6 +510,7 @@ if (count($_SESSION['subnet_requests']) >= $maxRequests) {
                         file_put_contents($logFile, $logEntry, FILE_APPEND | LOCK_EX);
                     }
 
+                    // Display Results
                     echo "<h3>Results for " . htmlspecialchars($validatedInput) . ":</h3>";
                     echo "<ul>";
                     foreach ($result as $key => $value) {
