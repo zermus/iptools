@@ -265,7 +265,7 @@ if (count($_SESSION['subnet_requests']) >= $maxRequests) {
 
     <?php
     /**
-     * Function to sanitize user input.
+     * Function to sanitize user input with enhanced validation.
      *
      * @param string $input The raw user input.
      * @return string|false Returns sanitized input if valid, false otherwise.
@@ -274,17 +274,42 @@ if (count($_SESSION['subnet_requests']) >= $maxRequests) {
         // Trim whitespace from beginning and end
         $sanitizedInput = trim($input);
 
-        // Remove any remaining whitespace within the input
-        $sanitizedInput = preg_replace('/\s+/', '', $sanitizedInput);
+        // Replace multiple whitespace characters with a single space
+        $sanitizedInput = preg_replace('/\s+/', ' ', $sanitizedInput);
 
         // Check if input is empty after trimming
         if (empty($sanitizedInput)) {
             return false; // Empty input
         }
 
-        // Validate as either a CIDR notation or IP address with subnet mask
-        if (preg_match('/^(\d{1,3}(\.\d{1,3}){3})(\/\d{1,2})$/', $input) ||
-            preg_match('/^(\d{1,3}(\.\d{1,3}){3})\s(\d{1,3}(\.\d{1,3}){3})$/', $input)) {
+        // CIDR Notation Validation
+        if (preg_match('/^(\d{1,3}(?:\.\d{1,3}){3})\/(\d{1,2})$/', $sanitizedInput, $matches)) {
+            $ip = $matches[1];
+            $mask = (int)$matches[2];
+
+            if ($mask < 0 || $mask > 32) {
+                return false; // Invalid subnet mask
+            }
+
+            if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+                return false; // Invalid IPv4 address
+            }
+
+            return $sanitizedInput;
+        }
+
+        // IP Address with Subnet Mask Validation
+        if (preg_match('/^(\d{1,3}(?:\.\d{1,3}){3})\s(\d{1,3}(?:\.\d{1,3}){3})$/', $sanitizedInput, $matches)) {
+            $ip = $matches[1];
+            $subnetMask = $matches[2];
+
+            if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) ||
+                !filter_var($subnetMask, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+                return false; // Invalid IPv4 address or subnet mask
+            }
+
+            // Additional subnet mask validation can be added here if necessary
+
             return $sanitizedInput;
         }
 
@@ -365,7 +390,7 @@ if (count($_SESSION['subnet_requests']) >= $maxRequests) {
     if ($_SERVER["REQUEST_METHOD"] == "POST") {
         if (isset($_POST["cidr"])) {
             // Check if rate limit is exceeded
-            if (isRateLimitExceeded()) {
+            if ($rateLimitExceeded) {
                 echo "<p class='error-message'>Rate limit exceeded. Please try again later.</p>";
                 exit;
             }
