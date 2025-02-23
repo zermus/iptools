@@ -338,9 +338,9 @@ if (count($_SESSION['ping_requests']) >= $maxRequests) {
                 // Determine the ping command based on the operating system
                 $os = strtoupper(substr(PHP_OS, 0, 3));
                 if ($os === 'WIN') {
-                    $cmd = "ping -n 4 $escapedDomain";
+                    $cmd = "ping -n 5 $escapedDomain";
                 } else {
-                    $cmd = "ping -c 4 $escapedDomain";
+                    $cmd = "ping -c 5 $escapedDomain";
                 }
 
                 // Execute the ping command and capture the output
