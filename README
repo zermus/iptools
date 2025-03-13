@@ -1,28 +1,90 @@
 # IPTOOLS
-HTML PHP tools that should just work.  Basic santization input and security is provided.  Feel free to use or reach out if updates are needed.  These are very loosely based on older PHP scripts of the same type that have become depreciated over the years.
-These are completely written from scratch to be functional with modern PHP.
 
-# NSLOOKUP
+HTML PHP tools that should just work. Basic sanitization, input validation, and security are provided. Feel free to use or reach out if updates are needed. These tools are loosely based on older PHP scripts that have become deprecated over the years and are completely rewritten from scratch to work with modern PHP.
+
+## Components
+
+### NSLOOKUP
 NS Lookup utility with the ability to set the PHP script's DNS server.
 
-# PING
+### PING
 Ping utility.
 
-# TRACEROUTE
+### TRACEROUTE
 Traceroute utility.
 
-# IPv4 Subnet Calculator
+### MTR TRACEROUTE TOOL
+This PHP-based tool allows you to run an MTR (My Traceroute) session via a web interface. It executes MTR in report mode and displays the output via Ajax polling.
+
+#### Requirements for the MTR Tool
+- PHP (version 7.x or later recommended)
+- A web server (e.g., Apache or Nginx with PHP-FPM)
+- MTR installed on the system  
+  - On RHEL/CentOS/Fedora: sudo dnf install mtr
+  - On Debian/Ubuntu: sudo apt-get install mtr
+- Sudo configured so that the web server user (commonly "apache" on RHEL/CentOS/Fedora or "www-data" on Debian/Ubuntu) can execute the MTR command without a password.
+- The tool uses sudo along with "env TERM=xterm" to force non-interactive report mode and avoid terminal errors.
+
+#### Installation for the MTR Tool
+
+1. Place the Files:
+   - Copy the files "mtr.php" and "mtr_output.php" into your web server’s document root or your project directory.
+   - Create a subdirectory named "tmp" in the same directory as these PHP files.
+     
+     Example command:
+     mkdir /path/to/your-project/tmp
+     
+   - Ensure that the "tmp" directory is writable by the web server. For example:
+     sudo chown apache:apache /path/to/your-project/tmp   (For RHEL/CentOS/Fedora, if Apache runs as "apache")
+     or
+     sudo chown www-data:www-data /path/to/your-project/tmp   (For Debian/Ubuntu, if Apache runs as "www-data")
+     sudo chmod 755 /path/to/your-project/tmp
+
+2. Configure Sudoers:
+   The tool uses sudo to run MTR. First, find the full path to the MTR binary:
+     which mtr
+   This is typically "/usr/sbin/mtr".
+
+   Next, update your sudoers file using the "visudo" command to safely edit it:
+     sudo visudo
+   Then add a line to allow the web server user to run MTR without a password. For example:
+     - If Apache runs as "apache" on RHEL/CentOS/Fedora, add:
+         apache ALL=(root) NOPASSWD: /usr/sbin/mtr
+     - If Apache runs as "www-data" on Debian/Ubuntu, add:
+         www-data ALL=(root) NOPASSWD: /usr/sbin/mtr
+   Save and exit the editor. The changes take effect immediately—no reboot is required.
+
+3. Web Server Configuration:
+   - Ensure your web server is configured to execute PHP scripts.
+   - Place "mtr.php" and "mtr_output.php" in your document root or the appropriate project directory.
+
+4. Test the Installation:
+   Open your browser and navigate to the URL corresponding to "mtr.php" (for example, http://yourdomain.com/mtr.php).  
+   Enter a valid domain or IP address and submit. The tool will run MTR in report mode (using the "-r" flag) and display the output via Ajax polling (every 5 seconds).  
+   If issues arise (e.g., permissions or command execution errors), error messages will be displayed at the top of the page with basic troubleshooting information.
+
+#### Notes for the MTR Tool
+- SELinux/AppArmor:  
+  On distributions with SELinux (e.g., RHEL 9) or AppArmor (e.g., Ubuntu), you may need to adjust policies if you encounter permission issues.
+- Customization:  
+  The configuration variables (temporary directory, expiry time, and MTR path) are defined at the top of "mtr.php" for easy customization.
+- Security:  
+  The script uses basic input sanitization and escapes shell arguments. Always review and adjust security settings according to your environment.
+- Ajax and Terminal Settings:  
+  JavaScript (Ajax) polls "mtr_output.php" every 5 seconds. The "env TERM=xterm" setting ensures that MTR runs in non-interactive report mode without terminal errors.
+
+### IPv4 Subnet Calculator
 Displays IPv4 subnet information based on CIDR notation or IP and Subnet Mask input.
 
-# IPv6 Subnet Calculator
-Displays IPv4 subnet information based on CIDR notation input.
+### IPv6 Subnet Calculator
+Displays IPv6 subnet information based on CIDR notation input.
 
-# IPv6 Unique Local Address Generator
-Randomizes a ULA subnet for you based on input size.
+### IPv6 Unique Local Address Generator
+Randomizes a ULA subnet for you based on the input size.
 
-# WHOIS
+### WHOIS
 DNS or IP WHOIS lookup.
 
-# REQUIREMENTS
-WHOIS requires the WHOIS binary to be installed on the server and accessable from the web user.
-NSLOOKUP requires NSLOOKUP binary, commonly found in bind-utils.
+## REQUIREMENTS (for additional tools)
+- WHOIS: Requires the WHOIS binary to be installed on the server and accessible by the web user.
+- NSLOOKUP: Requires the NSLOOKUP binary, commonly found in the bind-utils package.
