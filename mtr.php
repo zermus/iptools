@@ -9,6 +9,35 @@ $expiryTime = 3600;                // Remove logs older than 1 hour
 $mtrPath    = '/usr/sbin/mtr';     // Full path to the mtr command
 $tracerouteTimeout = 60;           // Timeout in seconds
 $mtrColumns = 2000;                // Number of columns for MTR output (large for full hostnames)
+$serverFQDN = 'yourdomain.com';    // Replace with your server's FQDN
+$maxRequests = 100;                // Maximum number of requests
+$timeFrame = 3600;                 // Time frame in seconds (e.g., 3600 seconds = 1 hour)
+$enableLogging = true;             // Set to false to disable logging
+
+// Set Content Security Policy (CSP) Headers
+header("Content-Security-Policy:
+    default-src 'self';
+    script-src 'self' https://{$serverFQDN};
+    style-src 'self' 'unsafe-inline' https://{$serverFQDN};
+    img-src 'self' https://{$serverFQDN};"
+);
+
+// Initialize Rate Limiting Data
+if (!isset($_SESSION['subnet_requests'])) {
+    $_SESSION['subnet_requests'] = [];
+}
+
+// Clean Up Old Requests for Rate Limiting
+$_SESSION['subnet_requests'] = array_filter($_SESSION['subnet_requests'], function($timestamp) use ($timeFrame) {
+    return $timestamp > time() - $timeFrame;
+});
+
+// Check Rate Limit
+if (count($_SESSION['subnet_requests']) >= $maxRequests) {
+    $rateLimitExceeded = true;
+} else {
+    $rateLimitExceeded = false;
+}
 
 // ===== Environment Checks =====
 $envErrors = [];
@@ -47,8 +76,32 @@ function sanitizeAndValidate($input) {
     return false;
 }
 
+// ===== Rate Limiting Function =====
+function isRateLimitExceeded() {
+    global $maxRequests, $timeFrame;
+
+    // Clean up old requests
+    $_SESSION['subnet_requests'] = array_filter($_SESSION['subnet_requests'], function($timestamp) use ($timeFrame) {
+        return $timestamp > time() - $timeFrame;
+    });
+
+    if (count($_SESSION['subnet_requests']) >= $maxRequests) {
+        return true; // Rate limit exceeded
+    } else {
+        // Record the current request
+        $_SESSION['subnet_requests'][] = time();
+        return false; // Within rate limit
+    }
+}
+
 // ===== Process Form Submission =====
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["domain"])) {
+    // Check if rate limit is exceeded
+    if ($rateLimitExceeded) {
+        echo "<p style='color: #ff3333; font-weight: bold; text-align: center;'>Rate limit exceeded. Please try again later.</p>";
+        exit;
+    }
+
     $validatedDomain = sanitizeAndValidate($_POST["domain"]);
     if ($validatedDomain === false) {
         echo "<p style='color: #ff3333; font-weight: bold; text-align: center;'>Invalid domain or IP address. Please enter a valid value.</p>";
@@ -63,6 +116,13 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["domain"])) {
     $cmd = "(COLUMNS=$mtrColumns env TERM=xterm sudo $mtrPath -rw -c 10 $escapedDomain; "
          . "sleep $tracerouteTimeout) > " . escapeshellarg($tempFile) . " 2>&1 &";
     exec($cmd);
+
+    // Optional Logging (Updated to mtr_logs.txt)
+    if ($enableLogging) {
+        $logFile = 'mtr_logs.txt'; // Changed from subnet_logs.txt
+        $logEntry = date('Y-m-d H:i:s') . " - " . $_SERVER['REMOTE_ADDR'] . " - " . htmlspecialchars($validatedDomain) . "\n";
+        file_put_contents($logFile, $logEntry, FILE_APPEND | LOCK_EX);
+    }
 
     // Render the results page (spinner + output)
     ?>
@@ -101,25 +161,23 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["domain"])) {
                 border: 1px solid #900;
                 text-align: left;
             }
-            /* Wrapper around pre + spinner */
             .pre-wrapper {
                 position: relative;
                 margin-top: 20px;
                 width: 100%;
-                min-height: 200px; /* Ensures space for spinner */
+                min-height: 200px;
             }
             .pre-wrapper pre {
                 margin: 0;
                 padding: 10px;
                 border-radius: 4px;
                 background-color: #222;
-                white-space: pre;   /* No wrapping */
-                overflow-x: auto;   /* Horizontal scroll if needed */
+                white-space: pre;
+                overflow-x: auto;
                 font-family: Consolas, monospace;
                 min-height: 200px;
                 box-sizing: border-box;
             }
-            /* Spinner absolutely centered */
             .spinner {
                 position: absolute;
                 top: 50%;
@@ -147,7 +205,6 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["domain"])) {
                     .then(response => response.text())
                     .then(data => {
                         document.getElementById("output").innerText = data;
-                        // Hide spinner if we have real data
                         if (data.trim() !== "" && !data.includes("No output available yet.")) {
                             document.getElementById("spinner").style.display = 'none';
                         }
@@ -201,7 +258,6 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["domain"])) {
     <meta charset="UTF-8">
     <title>MTR Traceroute Tool</title>
     <style>
-        /* Basic page styling */
         body {
             background-color: #1e1e1e;
             color: #fff;
@@ -214,7 +270,6 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["domain"])) {
             justify-content: flex-start;
             min-height: 100vh;
         }
-        /* Smaller container for the form */
         .form-container {
             width: 60%;
             max-width: 600px;
