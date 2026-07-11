@@ -1,174 +1,86 @@
 <?php
 /*
- * IPTOOLS :: IPv6 subnet calculator
+ * IPTOOLS :: IPv6 ULA generator
  * MIT License (c) 2024 Cody Gee — full text in LICENSE.txt
  */
 require __DIR__ . '/iptools_common.php';
 
-/**
- * Configuration
- */
-$enableLogging = true; // Log queries to logs/subnetcalc-ipv6.log
-$maxRequests   = 100;  // Rate limit: max requests ...
-$timeFrame     = 3600; // ... per this many seconds, per client IP
-
 [$nonce, $csrf] = iptools_boot();
 
-/**
- * Sanitize and validate IPv6 CIDR input. Returns the cleaned string or false.
- */
-function sanitizeAndValidateIPv6CIDR($input) {
-    $sanitizedInput = preg_replace('/\s+/', '', trim($input));
-    if ($sanitizedInput === '') {
-        return false;
-    }
-    if (preg_match('/^([a-fA-F0-9:]+)\/(\d{1,3})$/', $sanitizedInput, $matches)) {
-        $ip     = $matches[1];
-        $subnet = (int)$matches[2];
-        if ($subnet <= 128 && filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
-            return $sanitizedInput;
-        }
-    }
-    return false;
+function format_ipv6_address($hex) {
+    return implode(':', str_split($hex, 4));
 }
 
-/**
- * Expand an IPv6 address to full (uncompressed) notation.
- */
-function expand_ipv6_address($ip) {
-    $binary = inet_pton($ip);
-    if ($binary === false) {
-        return $ip;
-    }
-    return implode(':', str_split(bin2hex($binary), 4));
-}
+$error       = null;
+$subnet_size = null;
+$results     = null;
 
-/**
- * Convert an IPv6 address to a GMP integer.
- */
-function inet6_to_int($inet6) {
-    $packed = inet_pton($inet6);
-    if ($packed === false) {
-        return false;
-    }
-    return gmp_init(bin2hex($packed), 16);
-}
-
-/**
- * Convert a GMP integer (as decimal string) back to an IPv6 address.
- */
-function int_to_inet6($int_str) {
-    $hex = str_pad(gmp_strval(gmp_init($int_str, 10), 16), 32, '0', STR_PAD_LEFT);
-    return inet_ntop(pack('H*', $hex));
-}
-
-/**
- * Calculate subnet details for a validated IPv6 CIDR.
- */
-function calculateSubnetInfo($cidr, $display_full) {
-    list($network, $subnet) = explode('/', $cidr);
-    $subnet = (int)$subnet;
-
-    $network_int = inet6_to_int($network);
-    if ($network_int === false) {
-        return false;
-    }
-
-    $host_bits = 128 - $subnet;
-
-    // Mask down to the true network address, then set all host bits for the end
-    $prefix_mask = gmp_mul(gmp_sub(gmp_pow(2, $subnet), 1), gmp_pow(2, $host_bits));
-    $network_start = gmp_and($network_int, $prefix_mask);
-    $end_int       = gmp_add($network_start, gmp_sub(gmp_pow(2, $host_bits), 1));
-
-    $start_ip = int_to_inet6(gmp_strval($network_start));
-    $end_ip   = int_to_inet6(gmp_strval($end_int));
-
-    if ($display_full) {
-        $start_ip = expand_ipv6_address($start_ip);
-        $end_ip   = expand_ipv6_address($end_ip);
-    }
-
-    return [
-        'Received Input'       => $cidr,
-        'Network'              => $start_ip,
-        'Subnet'               => '/' . $subnet,
-        'Usable Range'         => $start_ip . ' - ' . $end_ip,
-        'Subnet Prefix Length' => $subnet,
-    ];
-}
-
-$error             = null;
-$result            = null;
-$query             = null;
-$calculate_subnets = false;
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['subnet_size'])) {
+    $subnet_size = (int)$_POST['subnet_size'];
     if (!iptools_csrf_ok()) {
         $error = 'Invalid or expired form token. Please resubmit.';
-    } elseif (iptools_rate_limited('subnetcalc-ipv6', $maxRequests, $timeFrame)) {
-        $error = 'Rate limit exceeded. Please try again later.';
+    } elseif ($subnet_size < 48 || $subnet_size > 64) {
+        $error = 'Invalid subnet size.';
     } else {
-        $display_full      = isset($_POST['display_full']);
-        $calculate_subnets = isset($_POST['calculate_subnets']);
-        $query             = sanitizeAndValidateIPv6CIDR((string)($_POST['cidr'] ?? ''));
+        // Random 40-bit Global ID per RFC 4193 (fd00::/8 + 40 random bits)
+        $global_id = bin2hex(random_bytes(5));
 
-        if ($query === false) {
-            $error = 'Invalid input. Please enter a valid IPv6 CIDR notation.';
-        } else {
-            $result = calculateSubnetInfo($query, $display_full);
-            if ($result === false) {
-                $error = 'Failed to calculate subnet information. Please ensure the CIDR notation is correct.';
-            } elseif ($enableLogging) {
-                iptools_log('subnetcalc-ipv6', $query);
-            }
-        }
+        $ula_prefix_hex       = 'fd' . $global_id;
+        $ula_prefix_formatted = format_ipv6_address($ula_prefix_hex);
+
+        // First /64 subnet
+        $first_subnet = $ula_prefix_formatted . '::/64';
+
+        // Last /64 subnet: set all subnet bits (bits between the prefix and /64)
+        $prefix_bin  = inet_pton($ula_prefix_formatted . '::');
+        $prefix_int  = gmp_import($prefix_bin, 1, GMP_MSW_FIRST | GMP_BIG_ENDIAN);
+        $subnet_bits = 64 - $subnet_size;
+
+        $subnet_mask_shifted = gmp_mul(gmp_sub(gmp_pow(2, $subnet_bits), 1), gmp_pow(2, 64));
+        $last_subnet_int     = gmp_add($prefix_int, $subnet_mask_shifted);
+
+        $last_subnet_hex = str_pad(gmp_strval($last_subnet_int, 16), 32, '0', STR_PAD_LEFT);
+        $last_subnet     = inet_ntop(pack('H*', $last_subnet_hex)) . '/64';
+
+        $results = [
+            'prefix'      => $ula_prefix_formatted . '::/' . $subnet_size,
+            'num_subnets' => number_format(pow(2, $subnet_bits)),
+            'first'       => $first_subnet,
+            'last'        => $last_subnet,
+        ];
     }
 }
 
-iptools_page_open('subnetcalc6', $nonce, 'subnetcalc-ipv6.php');
+iptools_page_open('ula-gen', $nonce, 'ula_generator.php');
 ?>
-    <p class="tagline">IPv6 subnet math — 128 bits of headroom</p>
+    <p class="tagline">RFC 4193 unique local addresses — 40 bits of entropy</p>
     <form method="post">
         <input type="hidden" name="csrf" value="<?php echo htmlspecialchars($csrf); ?>">
-        <label for="cidr">IPv6 CIDR notation</label>
-        <input type="text" id="cidr" name="cidr" placeholder="e.g., 2606:4700::/32" maxlength="43" required>
-
-        <label><input type="checkbox" name="display_full" value="1"> display addresses in full notation</label>
-        <label><input type="checkbox" name="calculate_subnets" value="1"> calculate subnets within the usable range</label>
-
+        <label for="subnet_size">subnet size</label>
+        <select id="subnet_size" name="subnet_size">
+            <?php for ($size = 64; $size >= 48; $size--) {
+                $count    = number_format(pow(2, 64 - $size));
+                $selected = ($subnet_size === $size) ? ' selected' : '';
+                echo "<option value=\"{$size}\"{$selected}>/{$size} - {$count} /64" . ($size < 64 ? 's' : '') . "</option>";
+            } ?>
+        </select>
         <div class="submit-container">
-            <input type="submit" value="calculate">
+            <input type="submit" value="generate">
         </div>
     </form>
 <?php
 if ($error !== null) {
     echo "<p class='error-message'>" . htmlspecialchars($error) . "</p>";
-} elseif ($result !== null) {
+} elseif ($results !== null) {
     echo "<div class='output-item'>";
-    echo "<span class='out-label'>subnetcalc6 " . htmlspecialchars($query) . "</span>";
+    echo "<span class='out-label'>random ULA allocation</span>";
     echo "<ul class='results'>";
-    foreach ($result as $key => $value) {
-        echo "<li><strong>" . htmlspecialchars($key) . ":</strong> " . htmlspecialchars($value) . "</li>";
-    }
-    echo "</ul>";
-
-    if ($calculate_subnets) {
-        $original_subnet = (int)$result['Subnet Prefix Length'];
-        echo "<h4>Subnets within the usable range</h4>";
-        echo "<table>";
-        echo "<tr><th>Subnet Size</th><th>Number of Subnets</th></tr>";
-        for ($smaller_subnet = $original_subnet + 1; $smaller_subnet <= 128; $smaller_subnet++) {
-            $num_subnets = gmp_pow(2, $smaller_subnet - $original_subnet);
-            $formatted   = number_format((float)gmp_strval($num_subnets), 0, '', ',');
-            // number_format loses precision on huge counts; show raw digits instead
-            if ($smaller_subnet - $original_subnet > 50) {
-                $formatted = gmp_strval($num_subnets);
-            }
-            echo "<tr><td>/" . (int)$smaller_subnet . "</td><td>" . htmlspecialchars($formatted) . "</td></tr>";
-        }
-        echo "</table>";
-    }
-    echo "</div>";
+    echo "<li><strong>ULA Prefix:</strong> <input type='text' class='readonly-field copy-on-click' value='" . htmlspecialchars($results['prefix']) . "' readonly></li>";
+    echo "<li><strong>/64 Subnets:</strong> " . htmlspecialchars($results['num_subnets']) . "</li>";
+    echo "<li><strong>First /64:</strong> <input type='text' class='readonly-field copy-on-click' value='" . htmlspecialchars($results['first']) . "' readonly></li>";
+    echo "<li><strong>Last /64:</strong> <input type='text' class='readonly-field copy-on-click' value='" . htmlspecialchars($results['last']) . "' readonly></li>";
+    echo "</ul></div>";
+    // CSP forbids inline handlers; select-on-click is wired up here instead
+    echo "<script nonce=\"{$nonce}\">document.querySelectorAll('.copy-on-click').forEach(function (el) { el.addEventListener('click', function () { this.select(); }); });</script>";
 }
 iptools_page_close();
