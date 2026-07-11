@@ -1,363 +1,139 @@
 <?php
-session_start();
+/*
+ * IPTOOLS :: mtr
+ * MIT License (c) 2024 Cody Gee — full text in LICENSE.txt
+ */
+require __DIR__ . '/iptools_common.php';
 
 /**
- * Configuration Variables
+ * Configuration
  */
-$tempDir   = __DIR__ . '/tmp/';    // Directory for temporary logs
-$expiryTime = 3600;                // Remove logs older than 1 hour
-$mtrPath    = '/usr/sbin/mtr';     // Full path to the mtr command
-$tracerouteTimeout = 60;           // Timeout in seconds
-$mtrColumns = 2000;                // Number of columns for MTR output (large for full hostnames)
-$serverFQDN = 'yourdomain.com';    // Replace with your server's FQDN
-$maxRequests = 100;                // Maximum number of requests
-$timeFrame = 3600;                 // Time frame in seconds (e.g., 3600 seconds = 1 hour)
-$enableLogging = true;             // Set to false to disable logging
+$tempDir             = __DIR__ . '/tmp/'; // Directory for temporary MTR output logs
+$expiryTime          = 3600;              // Remove output logs older than this (seconds)
+$mtrPath             = '/usr/sbin/mtr';   // Full path to the mtr binary
+$tracerouteTimeout   = 60;                // Seconds the browser polls for output
+$mtrColumns          = 2000;              // Wide columns so hostnames aren't truncated
+$enableLogging       = true;              // Log queries to logs/mtr.log
+$allowPrivateTargets = false;             // Set true to permit tracing RFC1918/reserved addresses
+$maxRequests         = 100;               // Rate limit: max requests ...
+$timeFrame           = 3600;              // ... per this many seconds, per client IP
 
-// Set Content Security Policy (CSP) Headers
-header("Content-Security-Policy:
-    default-src 'self';
-    script-src 'self' https://{$serverFQDN};
-    style-src 'self' 'unsafe-inline' https://{$serverFQDN};
-    img-src 'self' https://{$serverFQDN};"
-);
-
-// Initialize Rate Limiting Data
-if (!isset($_SESSION['subnet_requests'])) {
-    $_SESSION['subnet_requests'] = [];
-}
-
-// Clean Up Old Requests for Rate Limiting
-$_SESSION['subnet_requests'] = array_filter($_SESSION['subnet_requests'], function($timestamp) use ($timeFrame) {
-    return $timestamp > time() - $timeFrame;
-});
-
-// Check Rate Limit
-if (count($_SESSION['subnet_requests']) >= $maxRequests) {
-    $rateLimitExceeded = true;
-} else {
-    $rateLimitExceeded = false;
-}
+[$nonce, $csrf] = iptools_boot();
 
 // ===== Environment Checks =====
 $envErrors = [];
 
-// Ensure tmp directory is writable
 if (!is_dir($tempDir) || !is_writable($tempDir)) {
-    $envErrors[] = "Temporary directory ($tempDir) is not writable.";
+    $envErrors[] = 'Temporary directory (' . htmlspecialchars($tempDir) . ') is not writable.';
 }
 
-// Test if MTR is available via sudo
-$cmdMtrTest = "COLUMNS=$mtrColumns env TERM=xterm sudo $mtrPath --version";
-$mtrVersion = shell_exec($cmdMtrTest);
-if (!$mtrVersion) {
-    $envErrors[] = "MTR command is not available or not executable via sudo. "
-                 . "To grant access, add the following line to your sudoers file (using visudo):<br>"
-                 . "<code>apache ALL=(root) NOPASSWD: $mtrPath</code>";
+$cmdMtrTest = "COLUMNS=$mtrColumns env TERM=xterm sudo " . escapeshellarg($mtrPath) . " --version";
+if (!shell_exec($cmdMtrTest)) {
+    $envErrors[] = 'MTR is not available or not executable via sudo. '
+                 . 'Grant access by adding this line via visudo:<br>'
+                 . '<code>apache ALL=(root) NOPASSWD: ' . htmlspecialchars($mtrPath) . '</code>';
 }
 
-// ===== Cleanup Old Logs =====
-foreach (glob($tempDir . "mtr_*.log") as $file) {
+// ===== Cleanup Old Output Logs =====
+foreach (glob($tempDir . 'mtr_*.log') ?: [] as $file) {
     if (is_file($file) && (time() - filemtime($file)) > $expiryTime) {
         unlink($file);
     }
 }
 
-// ===== Input Sanitization =====
-function sanitizeAndValidate($input) {
-    $input = trim($input);
-    // Remove inner whitespace
-    $input = preg_replace('/\s+/', '', $input);
-    // Validate domain or IP
-    if (filter_var($input, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME) !== false ||
-        filter_var($input, FILTER_VALIDATE_IP) !== false) {
-        return $input;
-    }
-    return false;
-}
-
-// ===== Rate Limiting Function =====
-function isRateLimitExceeded() {
-    global $maxRequests, $timeFrame;
-
-    // Clean up old requests
-    $_SESSION['subnet_requests'] = array_filter($_SESSION['subnet_requests'], function($timestamp) use ($timeFrame) {
-        return $timestamp > time() - $timeFrame;
-    });
-
-    if (count($_SESSION['subnet_requests']) >= $maxRequests) {
-        return true; // Rate limit exceeded
-    } else {
-        // Record the current request
-        $_SESSION['subnet_requests'][] = time();
-        return false; // Within rate limit
-    }
-}
-
 // ===== Process Form Submission =====
-if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["domain"])) {
-    // Check if rate limit is exceeded
-    if ($rateLimitExceeded) {
-        echo "<p style='color: #ff3333; font-weight: bold; text-align: center;'>Rate limit exceeded. Please try again later.</p>";
-        exit;
-    }
+$error = null;
 
-    $validatedDomain = sanitizeAndValidate($_POST["domain"]);
-    if ($validatedDomain === false) {
-        echo "<p style='color: #ff3333; font-weight: bold; text-align: center;'>Invalid domain or IP address. Please enter a valid value.</p>";
-        exit;
-    }
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!iptools_csrf_ok()) {
+        $error = 'Invalid or expired form token. Please resubmit.';
+    } elseif (iptools_rate_limited('mtr', $maxRequests, $timeFrame)) {
+        $error = 'Rate limit exceeded. Please try again later.';
+    } else {
+        $target = iptools_validate_host((string)($_POST['domain'] ?? ''));
+        if ($target === false) {
+            $error = 'Invalid domain or IP address. Please enter a valid value.';
+        } elseif (!iptools_target_allowed($target, $allowPrivateTargets)) {
+            $error = 'Target is (or resolves to) a private/reserved address. Probe refused.';
+        } else {
+            // One output file per session; session ids are sanitized before
+            // touching the filesystem in case strict mode is disabled.
+            $sid      = preg_replace('/[^a-zA-Z0-9,-]/', '', session_id());
+            $tempFile = $tempDir . 'mtr_' . $sid . '.log';
 
-    // Create unique temp file
-    $tempFile = $tempDir . "mtr_" . session_id() . ".log";
+            $escapedTarget = escapeshellarg($target);
+            $cmd = "(COLUMNS=$mtrColumns env TERM=xterm sudo " . escapeshellarg($mtrPath)
+                 . " -rw -c 10 $escapedTarget) > " . escapeshellarg($tempFile) . " 2>&1 &";
+            exec($cmd);
 
-    // Build MTR command in wide report mode (-rw), large columns, xterm, etc.
-    $escapedDomain = escapeshellarg($validatedDomain);
-    $cmd = "(COLUMNS=$mtrColumns env TERM=xterm sudo $mtrPath -rw -c 10 $escapedDomain; "
-         . "sleep $tracerouteTimeout) > " . escapeshellarg($tempFile) . " 2>&1 &";
-    exec($cmd);
-
-    // Optional Logging (Updated to mtr_logs.txt)
-    if ($enableLogging) {
-        $logFile = 'mtr_logs.txt'; // Changed from subnet_logs.txt
-        $logEntry = date('Y-m-d H:i:s') . " - " . $_SERVER['REMOTE_ADDR'] . " - " . htmlspecialchars($validatedDomain) . "\n";
-        file_put_contents($logFile, $logEntry, FILE_APPEND | LOCK_EX);
-    }
-
-    // Render the results page (spinner + output)
-    ?>
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <title>MTR Traceroute Tool</title>
-        <style>
-            body {
-                background-color: #1e1e1e;
-                color: #fff;
-                font-family: Arial, sans-serif;
-                margin: 0;
-                padding: 20px 0 20px;
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                justify-content: flex-start;
-                min-height: 100vh;
-            }
-            .results-container {
-                width: 80%;
-                max-width: 1000px;
-                padding: 20px;
-                border-radius: 8px;
-                background-color: #333;
-                text-align: center;
-                margin-bottom: 20px;
-            }
-            .error-box {
-                background-color: #fdd;
-                color: #900;
-                padding: 10px;
-                margin-bottom: 20px;
-                border: 1px solid #900;
-                text-align: left;
-            }
-            .pre-wrapper {
-                position: relative;
-                margin-top: 20px;
-                width: 100%;
-                min-height: 200px;
-            }
-            .pre-wrapper pre {
-                margin: 0;
-                padding: 10px;
-                border-radius: 4px;
-                background-color: #222;
-                white-space: pre;
-                overflow-x: auto;
-                font-family: Consolas, monospace;
-                min-height: 200px;
-                box-sizing: border-box;
-            }
-            .spinner {
-                position: absolute;
-                top: 50%;
-                left: 50%;
-                transform: translate(-50%, -50%);
-                border: 4px solid rgba(255, 255, 255, 0.3);
-                border-top: 4px solid #fff;
-                border-radius: 50%;
-                width: 30px;
-                height: 30px;
-                animation: spin 1s linear infinite;
-                z-index: 2;
-            }
-            @keyframes spin {
-                0%   { transform: rotate(0deg); }
-                100% { transform: rotate(360deg); }
-            }
-        </style>
-        <script>
-            var pollingInterval;
-            var tracerouteTimeout = <?php echo $tracerouteTimeout * 1000; ?>; // ms
-
-            function fetchOutput() {
-                fetch("mtr_output.php")
-                    .then(response => response.text())
-                    .then(data => {
-                        document.getElementById("output").innerText = data;
-                        if (data.trim() !== "" && !data.includes("No output available yet.")) {
-                            document.getElementById("spinner").style.display = 'none';
-                        }
-                    })
-                    .catch(error => {
-                        console.error("Error fetching output:", error);
-                    });
+            if ($enableLogging) {
+                iptools_log('mtr', $target);
             }
 
-            window.onload = function() {
-                fetchOutput();
-                pollingInterval = setInterval(fetchOutput, 5000);
-                setTimeout(function() {
-                    clearInterval(pollingInterval);
-                }, tracerouteTimeout);
-            }
-        </script>
-    </head>
-    <body>
-        <?php if (!empty($envErrors)) { ?>
-            <div class="results-container">
-                <div class="error-box">
-                    <h3>Environment Errors:</h3>
-                    <ul>
-                        <?php foreach ($envErrors as $error) { ?>
-                            <li><?php echo $error; ?></li>
-                        <?php } ?>
-                    </ul>
-                    <p>Current user: <?php echo htmlspecialchars(trim(shell_exec('whoami'))); ?></p>
-                </div>
-            </div>
-        <?php } ?>
-        <div class="results-container">
-            <h1>MTR Traceroute for <?php echo htmlspecialchars($validatedDomain); ?></h1>
+            // ===== Results page (spinner + Ajax polling) =====
+            iptools_page_open('mtr', $nonce, 'mtr.php');
+            ?>
+            <p class="tagline">tracing <?php echo htmlspecialchars($target); ?> — live for <?php echo (int)$tracerouteTimeout; ?>s</p>
             <div class="pre-wrapper">
                 <pre id="output">Loading output...</pre>
                 <div id="spinner" class="spinner"></div>
             </div>
-            <p>The session will attempt to traceroute for <?php echo $tracerouteTimeout; ?> seconds.</p>
-        </div>
-    </body>
-    </html>
-    <?php
-    exit;
+            <script nonce="<?php echo $nonce; ?>">
+                var pollingInterval;
+                var tracerouteTimeout = <?php echo (int)$tracerouteTimeout * 1000; ?>; // ms
+
+                function fetchOutput() {
+                    fetch("mtr_output.php")
+                        .then(function (response) { return response.text(); })
+                        .then(function (data) {
+                            document.getElementById("output").innerText = data;
+                            if (data.trim() !== "" && !data.includes("No output available yet.")) {
+                                document.getElementById("spinner").style.display = "none";
+                            }
+                        })
+                        .catch(function (error) {
+                            console.error("Error fetching output:", error);
+                        });
+                }
+
+                window.onload = function () {
+                    fetchOutput();
+                    pollingInterval = setInterval(fetchOutput, 5000);
+                    setTimeout(function () {
+                        clearInterval(pollingInterval);
+                        document.getElementById("spinner").style.display = "none";
+                    }, tracerouteTimeout);
+                };
+            </script>
+            <?php
+            iptools_page_close();
+            exit;
+        }
+    }
+}
+
+// ===== Form page =====
+iptools_page_open('mtr', $nonce, 'mtr.php');
+
+if (!empty($envErrors)) {
+    echo '<div class="error-box"><strong>Environment errors:</strong><ul>';
+    foreach ($envErrors as $envError) {
+        echo '<li>' . $envError . '</li>'; // messages above are static/escaped
+    }
+    echo '</ul><p>Current user: ' . htmlspecialchars(trim((string)shell_exec('whoami'))) . '</p></div>';
 }
 ?>
-
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>MTR Traceroute Tool</title>
-    <style>
-        body {
-            background-color: #1e1e1e;
-            color: #fff;
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 20px 0 20px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: flex-start;
-            min-height: 100vh;
-        }
-        .form-container {
-            width: 60%;
-            max-width: 600px;
-            padding: 20px;
-            border-radius: 8px;
-            background-color: #333;
-            text-align: center;
-            margin-bottom: 20px;
-            box-shadow: 0 0 10px rgba(0,0,0,0.5);
-        }
-        .error-box {
-            background-color: #fdd;
-            color: #900;
-            padding: 10px;
-            margin-bottom: 20px;
-            border: 1px solid #900;
-            text-align: left;
-        }
-        form {
-            margin: 20px 0;
-            text-align: left;
-        }
-        label {
-            display: block;
-            margin-bottom: 5px;
-            font-weight: bold;
-        }
-        input[type="text"],
-        input[type="submit"] {
-            padding: 8px 15px;
-            border-radius: 4px;
-            border: 1px solid #444;
-            background-color: #555;
-            color: #fff;
-            margin-bottom: 10px;
-            transition: background-color 0.3s ease;
-            width: 100%;
-            box-sizing: border-box;
-        }
-        input[type="text"]:hover,
-        input[type="text"]:focus {
-            background-color: #444;
-            border-color: #0000AA;
-            outline: none;
-        }
-        .submit-container {
-            text-align: center;
-            margin-top: 10px;
-        }
-        input[type="submit"] {
-            width: auto;
-            display: inline-block;
-            cursor: pointer;
-        }
-        input[type="submit"]:hover {
-            background-color: #777;
-        }
-        @media screen and (max-width: 600px) {
-            .form-container {
-                width: 90%;
-            }
-        }
-    </style>
-</head>
-<body>
-    <?php if (!empty($envErrors)) { ?>
-        <div class="form-container">
-            <div class="error-box">
-                <h3>Environment Errors:</h3>
-                <ul>
-                    <?php foreach ($envErrors as $error) { ?>
-                        <li><?php echo $error; ?></li>
-                    <?php } ?>
-                </ul>
-                <p>Current user: <?php echo htmlspecialchars(trim(shell_exec('whoami'))); ?></p>
-            </div>
+    <p class="tagline">my traceroute — 10 cycles, report mode</p>
+    <form method="post" action="">
+        <input type="hidden" name="csrf" value="<?php echo htmlspecialchars($csrf); ?>">
+        <label for="domain">target host / ip</label>
+        <input type="text" id="domain" name="domain" required maxlength="253" placeholder="e.g., example.com or 8.8.8.8">
+        <div class="submit-container">
+            <input type="submit" value="trace">
         </div>
-    <?php } ?>
-    <div class="form-container">
-        <h1>MTR Traceroute Tool</h1>
-        <form method="post" action="">
-            <label for="domain">Domain/IP Address:</label>
-            <input type="text" id="domain" name="domain" required maxlength="253" placeholder="e.g., example.com or 8.8.8.8">
-
-            <div class="submit-container">
-                <input type="submit" value="Trace">
-            </div>
-        </form>
-    </div>
-</body>
-</html>
+    </form>
+<?php
+if ($error !== null) {
+    echo "<p class='error-message'>" . htmlspecialchars($error) . "</p>";
+}
+iptools_page_close();
