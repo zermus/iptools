@@ -22,14 +22,16 @@ short pointer to that file instead of the full license text.
 
 | File                  | Tool                                                    |
 |-----------------------|---------------------------------------------------------|
+| `index.php`           | Landing page — dashboard of all tools                   |
+| `whois.php`           | Domain / IP WHOIS lookup                                |
 | `nslookup.php`        | DNS lookups (A, AAAA, MX, NS, TXT, PTR) with a configurable DNS server |
 | `ping.php`            | ICMP ping (IPv4 + IPv6)                                 |
 | `traceroute.php`      | Traceroute, capped hop count                            |
 | `mtr.php` + `mtr_output.php` | MTR (My Traceroute) in report mode with Ajax polling |
-| `whois.php`           | Domain / IP WHOIS lookup                                |
 | `subnetcalc.php`      | IPv4 subnet calculator (CIDR or dotted mask)            |
 | `subnetcalc-ipv6.php` | IPv6 subnet calculator                                  |
 | `ula_generator.php`   | RFC 4193 IPv6 Unique Local Address generator            |
+| `subnets.php`         | IPv4 + IPv6 subnet cheat sheet (`subnets.html` redirects here) |
 | `iptools_common.php`  | Shared security + theme layer (required by every tool)  |
 
 ## Installation
