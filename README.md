@@ -15,6 +15,10 @@ IP-based rate limiting, and SSRF guards are built in. These tools are loosely
 based on older PHP scripts that have become deprecated over the years and are
 completely rewritten from scratch for modern PHP.
 
+📦 **[Download the latest release](https://cgee.net/iptools/ip-tools-0.1.1.tar.gz)** —
+or grab it from the [GitHub repo](https://github.com/zermus/iptools). Just extract
+into a web root; there is no build step.
+
 Licensed under the MIT License — see LICENSE.txt. Each source file carries a
 short pointer to that file instead of the full license text.
 

@@ -1,0 +1,23 @@
+# iptools :: Apache hardening shim.
+# Drop the suite into a web root and browse the individual tools directly
+# (whois.php, ping.php, ...). This file locks down the parts that should
+# never be fetched over HTTP. On Nginx, apply the equivalent rules in your
+# server block — .htaccess is not consulted there.
+
+# Land on the dashboard by default.
+DirectoryIndex index.php
+
+# The shared include is required by every tool; it is never a page itself.
+<Files "iptools_common.php">
+    Require all denied
+</Files>
+
+# Query logs and MTR scratch output are for the server, not the world.
+# (The tools also drop a deny-all .htaccess into logs/ at runtime; this is
+#  belt-and-suspenders and also covers tmp/.)
+RedirectMatch 403 (?i)^/.*/(logs|tmp)/
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^(logs|tmp)(/|$) - [F,L]
+</IfModule>

@@ -1,0 +1,11 @@
+# Runtime data — never commit
+logs/
+tmp/
+*.log
+
+# Build output
+releases/
+
+# OS cruft
+.DS_Store
+Thumbs.db
