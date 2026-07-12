@@ -176,14 +176,15 @@ function iptools_log(string $tool, string $message): void {
  */
 function iptools_page_open(string $title, string $nonce, string $active = ''): void {
     $tools = [
+        'whois.php'           => 'whois',
         'nslookup.php'        => 'nslookup',
         'ping.php'            => 'ping',
         'traceroute.php'      => 'trace',
         'mtr.php'             => 'mtr',
-        'whois.php'           => 'whois',
         'subnetcalc.php'      => 'calc4',
         'subnetcalc-ipv6.php' => 'calc6',
         'ula_generator.php'   => 'ula',
+        'subnets.php'         => 'cheatsheet',
     ];
     $titleEsc = htmlspecialchars($title);
     echo "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n";
@@ -225,8 +226,7 @@ body::before {
     z-index: 99;
 }
 nav {
-    width: 92%;
-    max-width: 860px;
+    width: 98%;
     border: 1px solid var(--brd);
     background: var(--panel);
     padding: 8px 14px;
@@ -251,9 +251,12 @@ nav a:hover { color: var(--grn); text-shadow: 0 0 8px rgba(0, 255, 102, 0.6); }
 nav a.active { color: var(--grn); }
 nav a.active::before { content: "["; }
 nav a.active::after { content: "]"; }
+/* The panel hugs its content: snug around the form and small results,
+   growing up to the full viewport when output (e.g. whois) demands it */
 .container {
-    width: 92%;
-    max-width: 860px;
+    width: fit-content;
+    min-width: min(700px, 98%);
+    max-width: 98%;
     padding: 22px 26px;
     border: 1px solid var(--brd);
     background: var(--panel);
@@ -271,7 +274,8 @@ h1::before { content: "> "; color: var(--dim); }
 .cursor { animation: blink 1.1s steps(1) infinite; }
 @keyframes blink { 50% { opacity: 0; } }
 .tagline { color: var(--dim); margin: 0 0 18px; font-size: 0.85em; }
-form { text-align: left; }
+/* Forms stay a readable width while output blocks use the full container */
+form { text-align: left; max-width: 640px; margin: 0 auto; }
 label { display: block; margin-bottom: 5px; color: var(--dim); }
 label::before { content: ":: "; }
 input[type="text"], select {
@@ -313,7 +317,14 @@ input[type="submit"]:hover {
 .output-item .out-label::before { content: "── "; }
 .output-item .out-label::after { content: " ─────"; }
 pre {
+    /* Sized to the widest output line so the panel stretches with the
+       content; once the panel hits the viewport edge, long lines wrap
+       instead of scrolling off-screen */
     white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    width: max-content;
+    min-width: 100%;
+    max-width: 100%;
     text-align: left;
     background: var(--panel-deep);
     border: 1px solid var(--brd);
@@ -321,7 +332,7 @@ pre {
     color: var(--ink);
     padding: 12px;
     overflow: auto;
-    max-height: 480px;
+    max-height: 75vh;
     margin-top: 8px;
     font-family: inherit;
     font-size: 0.9em;
@@ -333,6 +344,47 @@ ul.results li strong { color: var(--grn); font-weight: normal; }
 table { margin: 12px auto 0; border-collapse: collapse; }
 table th, table td { border: 1px solid var(--brd); padding: 6px 16px; }
 table th { background: var(--panel-deep); color: var(--grn); font-weight: normal; }
+/* Cheat sheet: rows flagged as notable allocations */
+tr.hilite th, tr.hilite td {
+    background: rgba(255, 176, 0, 0.08);
+    color: var(--amber);
+    border-color: rgba(255, 176, 0, 0.35);
+}
+/* Cheat sheet: side-by-side subnet guide panels */
+.cheat-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    justify-content: center;
+    align-items: flex-start;
+    margin-top: 12px;
+}
+.cheat-grid .cheat-panel { text-align: center; }
+.cheat-grid .cheat-panel > strong { color: var(--grn); font-weight: normal; }
+/* Landing page tool grid */
+.tool-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    gap: 14px;
+    margin-top: 20px;
+    width: min(880px, 94vw);
+}
+a.tool-card {
+    display: block;
+    border: 1px solid var(--brd);
+    background: var(--panel-deep);
+    padding: 14px 16px;
+    text-decoration: none;
+    text-align: left;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+a.tool-card:hover {
+    border-color: var(--grn);
+    box-shadow: 0 0 14px rgba(0, 255, 102, 0.25);
+}
+a.tool-card .tool-name { color: var(--grn); display: block; }
+a.tool-card .tool-name::before { content: "./"; color: var(--dim); }
+a.tool-card .tool-desc { color: var(--dim); font-size: 0.82em; display: block; margin-top: 6px; }
 p.error-message { color: var(--err); text-shadow: 0 0 8px rgba(255, 85, 85, 0.4); margin-top: 18px; }
 p.error-message::before { content: "[!] "; }
 h3, h4 { color: var(--grn); font-weight: normal; }
@@ -344,8 +396,9 @@ h3, h4 { color: var(--grn); font-weight: normal; }
     text-align: center;
     cursor: pointer;
 }
-.pre-wrapper { position: relative; margin-top: 8px; min-height: 200px; }
-.pre-wrapper pre { min-height: 200px; white-space: pre; margin-top: 0; }
+.pre-wrapper { position: relative; margin-top: 8px; min-height: 200px; min-width: min(600px, 100%); }
+/* MTR report output stays unwrapped (columns must line up); scrolls instead */
+.pre-wrapper pre { min-height: 200px; margin-top: 0; white-space: pre; overflow-wrap: normal; }
 .spinner {
     position: absolute;
     top: 50%;
@@ -384,14 +437,15 @@ footer {
     z-index: 10;
 }
 @media screen and (max-width: 600px) {
-    .container { width: 100%; padding: 16px; }
+    .container { width: 100%; min-width: 0; padding: 16px; }
     nav { width: 100%; }
-    pre { font-size: 0.8em; }
+    /* Wrap output on small screens instead of forcing a wide panel */
+    pre { font-size: 0.8em; white-space: pre-wrap; width: auto; }
     input[type="submit"] { width: 100%; }
     .readonly-field { min-width: 0; width: 100%; }
 }
     <?php
-    echo "</style>\n</head>\n<body>\n<nav><span class=\"brand\">iptools://</span>";
+    echo "</style>\n</head>\n<body>\n<nav><a class=\"brand\" href=\"index.php\">iptools://</a>";
     foreach ($tools as $file => $label) {
         $cls = ($file === $active) ? ' class="active"' : '';
         echo "<a href=\"{$file}\"{$cls}>{$label}</a>";
@@ -404,5 +458,5 @@ footer {
  * Close the themed page.
  */
 function iptools_page_close(): void {
-    echo "</div>\n<footer>iptools v0.1.0 — MIT licensed — [ all systems nominal ]</footer>\n</body>\n</html>\n";
+    echo "</div>\n<footer>iptools v0.1.1 — MIT licensed — [ all systems nominal ]</footer>\n</body>\n</html>\n";
 }
