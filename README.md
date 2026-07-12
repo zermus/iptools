@@ -134,3 +134,10 @@ to the browser through Ajax polling (every 5 seconds).
 Each tool keeps its configuration variables at the top of the file. The
 shared theme lives in `iptools_common.php` (`iptools_page_open()`); tweak the
 CSS variables in `:root` to re-skin the whole suite at once.
+
+## License
+
+Released under the [MIT License](LICENSE.txt).
+
+- Official website: https://cgee.net/iptools/
+- Feedback: cgee [at] cgee [dot] net
