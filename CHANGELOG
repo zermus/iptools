@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.1] - 07-11-2026
+
+### Added
+
+- `index.php`: landing page with a dashboard of all tools.
+- `subnets.php`: IPv4 + IPv6 subnet cheat sheet in the suite theme. Tables
+  are generated with GMP, so all values are exact (the old hand-typed IPv6
+  counts had float rounding errors). `subnets.html` now redirects here; its
+  Matomo tracking scripts were dropped (the suite CSP would block them —
+  whitelist your Matomo origin in `iptools_common.php` if you want them back).
+
+### Changed
+
+- Nav reordered: whois, nslookup, ping, trace, mtr, calc4, calc6, ula,
+  cheatsheet. The `iptools://` brand now links to the landing page.
+- Output panels size to their content: snug around short results, stretching
+  to the full viewport for wide output (e.g. whois), with horizontal scroll
+  inside the block for extreme lines.
+
 ## [0.1.0] - 07-11-2026
 
 ### Added
