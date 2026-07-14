@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.2] - 07-12-2026
+
+### Added
+
+- Output syntax highlighting across the network tools, matching the theme:
+  amber for key numbers (ping/RTT times, whois domain and expiry date),
+  green for good answers (resolved records, name servers, signedDelegation,
+  0% packet loss), red for failures (timeouts, unreachable, NXDOMAIN,
+  packet loss, dead hops), and dim for chrome (whois field labels, hop
+  numbers, table headers). Implemented server-side in
+  `iptools_highlight()` (iptools_common.php); output is escaped before
+  spans are injected. Colors only — no bold — so monospace column
+  alignment in traceroute/MTR tables is preserved.
+- The MTR live view now streams highlighted output (mtr_output.php returns
+  an escaped, highlighted HTML fragment).
+
 ## [0.1.1] - 07-11-2026
 
 ### Added

@@ -72,7 +72,7 @@ if ($error !== null) {
 } elseif ($output !== null) {
     echo "<div class='output-item'>";
     echo "<span class='out-label'>ping " . htmlspecialchars($target) . "</span>";
-    echo "<pre>" . htmlspecialchars($output) . "</pre>";
+    echo "<pre>" . iptools_highlight($output, 'ping') . "</pre>";
     echo "</div>";
 }
 iptools_page_close();

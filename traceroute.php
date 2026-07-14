@@ -71,7 +71,7 @@ if ($error !== null) {
 } elseif ($output !== null) {
     echo "<div class='output-item'>";
     echo "<span class='out-label'>traceroute " . htmlspecialchars($target) . "</span>";
-    echo "<pre>" . htmlspecialchars($output) . "</pre>";
+    echo "<pre>" . iptools_highlight($output, 'traceroute') . "</pre>";
     echo "</div>";
 }
 iptools_page_close();

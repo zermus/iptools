@@ -86,7 +86,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     fetch("mtr_output.php")
                         .then(function (response) { return response.text(); })
                         .then(function (data) {
-                            document.getElementById("output").innerText = data;
+                            // Server-highlighted fragment (escaped server-side)
+                            document.getElementById("output").innerHTML = data;
                             if (data.trim() !== "" && !data.includes("No output available yet.")) {
                                 document.getElementById("spinner").style.display = "none";
                             }

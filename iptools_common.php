@@ -172,6 +172,113 @@ function iptools_log(string $tool, string $message): void {
 }
 
 /**
+ * Escape and colorize tool output for display inside a <pre>.
+ *
+ * Rules are per tool. "line" rules match against the RAW line and wrap the
+ * whole (escaped) line in one span — first match wins. "token" rules run in
+ * order against the ESCAPED line (so patterns see &lt; etc.); each carries a
+ * guard so later patterns never match inside an already-injected span.
+ * Rule format: [pattern-body, pcre-flags, css-class]. Bodies may use \K to
+ * highlight only the tail of a match. Unknown tools fall back to plain
+ * escaping. Colors only — no bold — so column alignment survives.
+ */
+function iptools_highlight(string $raw, string $tool): string {
+    static $rulesets = null;
+    if ($rulesets === null) {
+        $rulesets = [
+            'ping' => [
+                'line' => [
+                    ['Destination Host Unreachable|Request timed out|Unknown host|Name or service not known|failure in name resolution|100% packet loss', 'i', 'hl-r'],
+                ],
+                'token' => [
+                    ['\b\d+(?:\.\d+)?/\d+(?:\.\d+)?/\d+(?:\.\d+)?/\d+(?:\.\d+)?', '', 'hl-a'],
+                    ['(?:&lt;)?\b\d+(?:\.\d+)? ?ms\b', '', 'hl-a'],
+                    ['\b0(?:\.0)?% (?:packet )?loss', '', 'hl-g'],
+                    ['\b\d+(?:\.\d+)?% (?:packet )?loss', '', 'hl-r'],
+                ],
+            ],
+            'traceroute' => [
+                'line' => [
+                    ['^\s*\d+\s+(?:\*\s*)+$', '', 'hl-r'],
+                    ['Request timed out|Unable to resolve target', 'i', 'hl-r'],
+                ],
+                'token' => [
+                    ['(?:&lt;)?\b\d+(?:\.\d+)? ms\b', '', 'hl-a'],
+                    ['(?<=\s)\*(?=\s|$)', '', 'hl-r'],
+                    ['\b\d{1,3}(?:\.\d{1,3}){3}\b', '', 'hl-g'],
+                    ['\b(?:[0-9a-fA-F]{1,4}:){2,}[0-9a-fA-F:]+', '', 'hl-g'],
+                    ['^ *\d+(?=\s)', '', 'hl-d'],
+                ],
+            ],
+            'mtr' => [
+                'line' => [
+                    ['^(?:Start:|HOST:)', '', 'hl-d'],
+                ],
+                'token' => [
+                    ['\?\?\?', '', 'hl-r'],
+                    ['\b0\.0%', '', 'hl-g'],
+                    ['\b\d+(?:\.\d+)?%', '', 'hl-r'],
+                    ['^\s*\d+\.\|--', '', 'hl-d'],
+                ],
+            ],
+            'nslookup' => [
+                'line' => [
+                    ["can't find|NXDOMAIN|SERVFAIL|REFUSED|No answer|connection timed out|no servers could be reached", 'i', 'hl-r'],
+                    ['^Server:\s', '', 'hl-d'],
+                    ['^Address:\s+\S+#\d+\s*$', '', 'hl-d'],
+                ],
+                'token' => [
+                    ['\bAddress(?:es)?: *\K[0-9a-fA-F:.]+$', '', 'hl-g'],
+                    ['\b(?:name|nameserver|mail exchanger|internet address|text) = \K.*$', '', 'hl-g'],
+                ],
+            ],
+            'whois' => [
+                'line' => [
+                    ['^\s*(?:No match for|NOT FOUND|No entries found|Domain not found|The queried object does not exist|No Data Found)', 'i', 'hl-r'],
+                ],
+                'token' => [
+                    ['^\s*Domain Name: *\K.*$', 'i', 'hl-a'],
+                    ['^\s*Registr(?:y Expiry|ar Registration Expiration) Date: *\K.*$', 'i', 'hl-a'],
+                    ['^\s*Name Server: *\K\S.*$', 'i', 'hl-g'],
+                    ['\bsignedDelegation\b', '', 'hl-g'],
+                    ['\bunsigned\b', 'i', 'hl-a'],
+                    ['^ *[A-Za-z][A-Za-z0-9 ._/()-]{0,40}:(?=\s|$)', '', 'hl-d'],
+                ],
+            ],
+        ];
+    }
+
+    if (!isset($rulesets[$tool])) {
+        return htmlspecialchars($raw);
+    }
+
+    $rules = $rulesets[$tool];
+    $out   = [];
+    foreach (preg_split('/\r\n|\r|\n/', $raw) as $line) {
+        $esc     = htmlspecialchars($line);
+        $wrapped = false;
+        foreach ($rules['line'] as $r) {
+            if (preg_match('~(?:' . $r[0] . ')~' . $r[1], $line)) {
+                $out[]   = '<span class="' . $r[2] . '">' . $esc . '</span>';
+                $wrapped = true;
+                break;
+            }
+        }
+        if (!$wrapped) {
+            foreach ($rules['token'] as $r) {
+                $esc = preg_replace(
+                    '~(?:' . $r[0] . ')(?![^<]*</span>)~' . $r[1],
+                    '<span class="' . $r[2] . '">$0</span>',
+                    $esc
+                );
+            }
+            $out[] = $esc;
+        }
+    }
+    return implode("\n", $out);
+}
+
+/**
  * Open the themed page: doctype, head (with nonce'd CSS), nav, container.
  */
 function iptools_page_open(string $title, string $nonce, string $active = ''): void {
@@ -337,6 +444,12 @@ pre {
     font-family: inherit;
     font-size: 0.9em;
 }
+/* Output highlighting (iptools_highlight): amber = key numbers,
+   green = good answers, red = failures, dim = labels/chrome */
+pre .hl-a { color: var(--amber); }
+pre .hl-g { color: var(--grn); }
+pre .hl-r { color: var(--err); }
+pre .hl-d { color: var(--dim); }
 ul.results { list-style: none; padding: 0; margin: 18px auto 0; max-width: 640px; text-align: left; }
 ul.results li { margin-bottom: 6px; padding-left: 18px; }
 ul.results li::before { content: "▸ "; color: var(--grn); margin-left: -18px; }
@@ -458,5 +571,5 @@ footer {
  * Close the themed page.
  */
 function iptools_page_close(): void {
-    echo "</div>\n<footer>iptools v0.1.1 — MIT licensed — [ all systems nominal ]</footer>\n</body>\n</html>\n";
+    echo "</div>\n<footer>iptools v0.1.2 — MIT licensed — [ all systems nominal ]</footer>\n</body>\n</html>\n";
 }

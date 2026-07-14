@@ -108,7 +108,7 @@ if ($error !== null) {
 } elseif ($output !== null) {
     echo "<div class='output-item'>";
     echo "<span class='out-label'>nslookup -type=" . htmlspecialchars($queryType) . " " . htmlspecialchars($target) . "</span>";
-    echo "<pre>" . htmlspecialchars($output) . "</pre>";
+    echo "<pre>" . iptools_highlight($output, 'nslookup') . "</pre>";
     echo "</div>";
 }
 iptools_page_close();

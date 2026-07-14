@@ -59,7 +59,7 @@ if ($error !== null) {
 } elseif ($output !== null) {
     echo "<div class='output-item'>";
     echo "<span class='out-label'>whois " . htmlspecialchars($target) . "</span>";
-    echo "<pre>" . htmlspecialchars($output) . "</pre>";
+    echo "<pre>" . iptools_highlight($output, 'whois') . "</pre>";
     echo "</div>";
 }
 iptools_page_close();
