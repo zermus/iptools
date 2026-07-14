@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Planned
+
+- Optional `iptools_config.php` for per-tool settings, never overwritten by
+  releases, so upgrades become a straight file replacement (config currently
+  lives at the top of each tool file and must be re-applied after upgrading).
+
 ## [0.1.2] - 07-12-2026
 
 ### Added

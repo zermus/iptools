@@ -51,6 +51,23 @@ short pointer to that file instead of the full license text.
    location ^~ /path/to/iptools/logs/ { deny all; }
    ```
 
+## Upgrading
+
+**From 0.1.x:** configuration lives at the top of each tool file
+(`$dnsServer`, `$allowPrivateTargets`, `$maxRequests`, `$mtrPath`, …), so
+extracting a new release over your install will overwrite any values you
+changed. Note your tweaks first, extract, then re-apply them. Your `logs/`
+and `tmp/` directories are not touched by the release archive.
+
+**From the pre-0.1.0 standalone scripts:** treat it as a fresh install —
+the tools now require `iptools_common.php` alongside them. Also delete any
+old `*_logs.txt` files from the web root; those were world-readable, which
+is one of the things 0.1.0 fixed (logging now goes to the protected
+`logs/` directory).
+
+*Planned for 0.2.0:* an optional `iptools_config.php` (never overwritten by
+releases) so upgrades become a straight file replacement.
+
 ## Requirements
 
 - PHP 7.3+ with the GMP extension (used by the IPv6 tools)
