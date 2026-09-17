@@ -11,6 +11,7 @@ require __DIR__ . '/iptools_common.php';
 $enableLogging = true; // Log queries to logs/whois.log
 $maxRequests   = 100;  // Rate limit: max requests ...
 $timeFrame     = 3600; // ... per this many seconds, per client IP
+$commandTimeout = 30;  // Kill the whois lookup after this many seconds
 
 [$nonce, $csrf] = iptools_boot();
 
@@ -29,7 +30,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $error = 'Invalid domain name or IP address. Please enter a valid input.';
         } else {
             $escapedTarget = escapeshellarg($target);
-            $output = shell_exec("whois $escapedTarget 2>&1");
+            $output = shell_exec(iptools_timeout_prefix($commandTimeout) . "whois $escapedTarget 2>&1");
 
             if ($output) {
                 if ($enableLogging) {

@@ -13,9 +13,10 @@ DirectoryIndex index.php
 </Files>
 
 # Query logs and MTR scratch output are for the server, not the world.
-# (The tools also drop a deny-all .htaccess into logs/ at runtime; this is
-#  belt-and-suspenders and also covers tmp/.)
-RedirectMatch 403 (?i)^/.*/(logs|tmp)/
+# (The tools also drop a deny-all .htaccess into logs/ and tmp/ at runtime;
+#  this is belt-and-suspenders.) The optional prefix group matches both a
+# web-root install (/logs/) and a subdirectory install (/iptools/logs/).
+RedirectMatch 403 (?i)^(/.*)?/(logs|tmp)/
 
 <IfModule mod_rewrite.c>
     RewriteEngine On

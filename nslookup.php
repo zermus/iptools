@@ -12,6 +12,7 @@ $dnsServer     = '1.1.1.1'; // DNS server used for queries
 $enableLogging = true;      // Log queries to logs/nslookup.log
 $maxRequests   = 100;       // Rate limit: max requests ...
 $timeFrame     = 3600;      // ... per this many seconds, per client IP
+$commandTimeout = 20;       // Kill the lookup after this many seconds
 
 // Query types offered in the form. The submitted value is validated
 // against this whitelist before ever touching a shell command.
@@ -40,7 +41,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif (iptools_rate_limited('nslookup', $maxRequests, $timeFrame)) {
         $error = 'Rate limit exceeded. Please try again later.';
     } else {
-        $target = iptools_validate_host((string)($_POST['domain'] ?? ''));
+        // Underscores allowed: _dmarc, _domainkey, _mta-sts etc. are DNS names
+        $target = iptools_validate_host((string)($_POST['domain'] ?? ''), true);
         if ($target === false) {
             $error = 'Invalid domain name or IP address. Please enter a valid input.';
         } elseif ($queryType === 'PTR' && filter_var($target, FILTER_VALIDATE_IP) === false) {
@@ -69,7 +71,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $escapedQuery     = escapeshellarg($queryValue);
                 $escapedDnsServer = escapeshellarg($dnsServer);
                 // $queryType is whitelisted above, safe to interpolate
-                $output = shell_exec("nslookup -type={$queryType} {$escapedQuery} {$escapedDnsServer} 2>&1");
+                $output = shell_exec(iptools_timeout_prefix($commandTimeout)
+                    . "nslookup -type={$queryType} {$escapedQuery} {$escapedDnsServer} 2>&1");
 
                 if ($output) {
                     if ($enableLogging) {

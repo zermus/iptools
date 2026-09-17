@@ -4,6 +4,41 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+
+- SSRF guard bypass: numeric host shorthand (`127.1`, `2130706433`,
+  `0x7f000001`), `/etc/hosts` names, and DNS failures were allowed through
+  because the guard failed open when DNS returned nothing, while the probe
+  binaries resolved those names to internal addresses. The guard
+  (`iptools_resolve_target()`) now fails closed and hands ping, traceroute,
+  and MTR the vetted IP instead of the name, which also closes the DNS
+  rebinding window.
+- The guard now also refuses CGNAT (100.64.0.0/10), benchmarking, multicast,
+  Teredo, local-use NAT64, and IPv6 forms that embed a private IPv4 address
+  (IPv4-mapped, NAT64 `64:ff9b::/96`, 6to4 `2002::/16`). Uses
+  `FILTER_FLAG_GLOBAL_RANGE` on PHP 8.2+.
+- Rate limiting counts IPv6 clients per /64, so rotating addresses no longer
+  bypasses it.
+- All shell commands run under `timeout`, so hung lookups can't exhaust PHP
+  workers; MTR runs are capped at `$maxConcurrent` in flight.
+- `mtr.php` no longer spawns `sudo mtr --version` and `whoami` on every page
+  view, and only shows server paths, the web user, and sudoers hints when
+  `$showDiagnostics` is enabled.
+- MTR no longer requires sudo (`$mtrUseSudo`, default off); when enabled,
+  the documented sudoers rule is restricted to the exact arguments used.
+- MTR output files are named by a random per-session id instead of the
+  session id, and `tmp/` gets a runtime deny-all `.htaccess`. The root
+  `.htaccess` `RedirectMatch` now also matches web-root installs.
+
+### Fixed
+
+- nslookup accepts underscore names (`_dmarc`, `_domainkey`, …) and, with
+  the intl extension, internationalized domain names.
+- Tool output lines with invalid UTF-8 (common in whois) no longer vanish on
+  PHP < 8.1, and lines too long for PCRE are shown uncolored instead of blank.
+- Hostnames containing whitespace are rejected instead of silently having
+  the spaces stripped.
+
 ### Planned
 
 - Optional `iptools_config.php` for per-tool settings, never overwritten by

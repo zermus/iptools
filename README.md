@@ -45,10 +45,12 @@ short pointer to that file instead of the full license text.
    without the common file.
 2. For the MTR tool, follow the extra steps below.
 3. A `logs/` directory is created automatically on first logged query
-   (with an Apache `.htaccess` deny-all inside). On Nginx, block it yourself:
+   (with an Apache `.htaccess` deny-all inside; the MTR tool drops the same
+   into `tmp/`). On Nginx, block both yourself:
 
    ```
    location ^~ /path/to/iptools/logs/ { deny all; }
+   location ^~ /path/to/iptools/tmp/  { deny all; }
    ```
 
 ## Upgrading
@@ -70,7 +72,11 @@ releases) so upgrades become a straight file replacement.
 
 ## Requirements
 
-- PHP 7.3+ with the GMP extension (used by the IPv6 tools)
+- PHP 7.3+ with the GMP extension (used by the IPv6 tools); PHP 8.2+
+  recommended (its `FILTER_FLAG_GLOBAL_RANGE` strengthens the SSRF guard)
+- Optional: the intl extension, to accept internationalized domain names
+- coreutils `timeout` (present on virtually every Linux system), used to
+  kill hung lookups
 - A web server (Apache, or Nginx with PHP-FPM)
 - WHOIS: the `whois` binary installed and accessible by the web user
 - NSLOOKUP: the `nslookup` binary (commonly in the `bind-utils` / `dnsutils` package)
@@ -85,14 +91,22 @@ Every tool shares the hardening layer in `iptools_common.php`:
   `Referrer-Policy` headers.
 - **CSRF tokens** on every form that triggers a command.
 - **Rate limiting keyed by client IP** and stored server-side in a temp file,
-  so it can't be bypassed by discarding the session cookie. Configure
-  `$maxRequests` / `$timeFrame` at the top of each tool.
-- **SSRF / internal-probe guard**: ping, traceroute, and MTR refuse targets
-  that are — or resolve to — private/reserved addresses (RFC 1918, loopback,
-  link-local, etc.). Set `$allowPrivateTargets = true` in a tool to relax this
-  for internal deployments. Note the guard resolves DNS separately from the
-  probe binary (a small rebinding window); for hardened deployments also
+  so it can't be bypassed by discarding the session cookie. IPv6 clients are
+  counted per /64, so rotating addresses doesn't reset the limit. Configure
+  `$maxRequests` / `$timeFrame` at the top of each tool. Behind a reverse
+  proxy every client shares the proxy's address; configure your web server
+  to restore the real client IP into `REMOTE_ADDR`.
+- **SSRF / internal-probe guard**: ping, traceroute, and MTR resolve the
+  target themselves and refuse it unless it resolves and every address is
+  public (not RFC 1918, loopback, link-local, CGNAT, multicast, or an IPv6
+  form wrapping one of those). The probe binary is then handed the IP, not
+  the name, so numeric shorthand (`127.1`), `/etc/hosts` entries, and DNS
+  rebinding can't slip past. Set `$allowPrivateTargets = true` in a tool to
+  relax this for internal deployments. For hardened deployments, also
   firewall outbound traffic from the web server.
+- **Command timeouts** (`$commandTimeout` / `$tracerouteTimeout`) so a hung
+  lookup can't tie up PHP workers, and a cap on concurrent MTR runs
+  (`$maxConcurrent`).
 - **Strict input validation** (hostname/IP whitelisting) before anything
   reaches `escapeshellarg()` and the shell.
 - **Query logging** (optional, `$enableLogging`) into `logs/<tool>.log`,
@@ -101,15 +115,17 @@ Every tool shares the hardening layer in `iptools_common.php`:
 
 ## MTR tool setup
 
-The MTR tool executes `mtr` in report mode via `sudo` and streams the output
-to the browser through Ajax polling (every 5 seconds).
+The MTR tool executes `mtr` in report mode and streams the output to the
+browser through Ajax polling (every 5 seconds).
 
 ### Requirements
 
 - MTR installed on the system
   - RHEL/CentOS/Fedora: `sudo dnf install mtr`
   - Debian/Ubuntu: `sudo apt-get install mtr`
-- Sudo configured so the web server user can run MTR without a password.
+- Distro packages ship `mtr-packet` with the raw-socket privilege it needs
+  (setuid or `cap_net_raw`), so MTR normally runs fine as the web server
+  user with no sudo at all. That is the default (`$mtrUseSudo = false`).
 
 ### Steps
 
@@ -124,18 +140,26 @@ to the browser through Ajax polling (every 5 seconds).
    sudo chmod 755 /path/to/iptools/tmp
    ```
 
-2. **Configure sudoers.** Find the MTR path with `which mtr` (typically
-   `/usr/sbin/mtr`), then run `sudo visudo` and add:
+2. **Check the MTR path** with `which mtr` (typically `/usr/sbin/mtr`) and
+   set `$mtrPath` in `mtr.php` if it differs.
+
+3. **Test** with `$showDiagnostics = true` set in `mtr.php`: browse to it,
+   enter a target, and submit. Setup problems (missing tmp dir, MTR not
+   runnable) are reported in detail at the top of the page. Set
+   `$showDiagnostics` back to `false` when done — it reveals server paths
+   and the web server user to visitors.
+
+4. **Only if MTR won't run unprivileged**, set `$mtrUseSudo = true` and
+   grant sudo for exactly the command the tool runs (`sudo visudo`):
 
    ```
-   apache ALL=(root) NOPASSWD: /usr/sbin/mtr     # RHEL/CentOS/Fedora
+   apache ALL=(root) NOPASSWD: /usr/sbin/mtr -rw -c 10 *     # RHEL/CentOS/Fedora
    # or
-   www-data ALL=(root) NOPASSWD: /usr/sbin/mtr   # Debian/Ubuntu
+   www-data ALL=(root) NOPASSWD: /usr/sbin/mtr -rw -c 10 *   # Debian/Ubuntu
    ```
 
-3. **Test** by browsing to `mtr.php`, entering a target, and submitting.
-   Environment problems (missing tmp dir, sudo not configured) are reported
-   in an error box at the top of the page.
+   Upgrading from 0.1.x with a bare `NOPASSWD: /usr/sbin/mtr` line? Narrow
+   it as above, or remove it if MTR works without sudo.
 
 ### Notes
 
