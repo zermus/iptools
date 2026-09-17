@@ -249,11 +249,11 @@
     <!-- Hero -->
     <header class="hero">
         <div class="wrap">
-            <span class="badge">&#128225; Version <b>0.1.2</b> &mdash; now with highlighted output</span>
+            <span class="badge">&#128225; Version <b>0.1.3</b> &mdash; security hardening release</span>
             <h1><span class="prompt">&gt;</span> network recon, <span class="grad">self-hosted</span><span class="cursor">&nbsp;</span></h1>
             <p class="lead">A free suite of PHP network diagnostic tools you run on your own server &mdash; whois, DNS, ping, traceroute, MTR, subnet math and more &mdash; hardened against abuse and wrapped in a green-phosphor terminal UI.</p>
             <div class="btn-row">
-                <a href="#download" class="btn btn-primary">&#11015; Download 0.1.2</a>
+                <a href="#download" class="btn btn-primary">&#11015; Download 0.1.3</a>
                 <a href="#tools" class="btn btn-ghost">See the tools</a>
             </div>
             <div class="meta">Free &amp; <b>MIT licensed</b> &nbsp;&middot;&nbsp; Runs on <b>PHP 7.3+</b> &nbsp;&middot;&nbsp; No build step</div>
@@ -272,7 +272,7 @@
                 <div class="card">
                     <div class="ico">&#128737;</div>
                     <h3>SSRF &amp; internal-probe guard</h3>
-                    <p>ping, traceroute, and MTR refuse targets that resolve to private or reserved space, so the box can't be used to map your LAN.</p>
+                    <p>ping, traceroute, and MTR resolve targets themselves and probe only the vetted public IP refuse targets that resolve to private or reserved space, so the box can't be used to map your LAN.mdash; private, reserved, and tricky numeric forms like <code>127.1</code> are refused, so the box can't be used to map your LAN.</p>
                 </div>
                 <div class="card">
                     <div class="ico">&#128273;</div>
@@ -381,7 +381,7 @@ DNSSEC: <span class="c">signedDelegation</span>
                         <li><b>Web server</b><span>Apache or Nginx</span></li>
                         <li><b>PHP</b><span>7.3 or higher, with GMP</span></li>
                         <li><b>Binaries</b><span>whois, nslookup, ping, traceroute</span></li>
-                        <li><b>MTR (optional)</b><span>mtr via passwordless sudo</span></li>
+                        <li><b>MTR (optional)</b><span>mtr (runs unprivileged on most distros)</span></li>
                     </ul>
                 </div>
                 <div class="panel">
@@ -390,7 +390,7 @@ DNSSEC: <span class="c">signedDelegation</span>
                         <li><b>Download &amp; extract</b>Unpack the release into your web root &mdash; keep <code>iptools_common.php</code> alongside the tools.</li>
                         <li><b>Point your web server</b>Browse to <code>index.php</code> for the dashboard, or any tool directly.</li>
                         <li><b>Tune the config</b>Each tool has rate-limit, logging, and private-target toggles at the top of the file.</li>
-                        <li><b>MTR extras</b>For the MTR tool, create a writable <code>tmp/</code> and grant the web user passwordless sudo to <code>mtr</code>.</li>
+                        <li><b>MTR extras</b>For the MTR tool, create a writable <code>tmp/</code>. Distro mtr usually runs unprivileged; sudo is an opt-in fallback.</li>
                     </ol>
                 </div>
             </div>
@@ -402,9 +402,9 @@ DNSSEC: <span class="c">signedDelegation</span>
         <div class="wrap">
             <div class="download-card">
                 <div class="eyebrow">Download</div>
-                <h2>Get iptools 0.1.2</h2>
+                <h2>Get iptools 0.1.3</h2>
                 <p>The complete suite in one small tarball &mdash; free forever.</p>
-                <a href="https://cgee.net/iptools/ip-tools-0.1.2.tar.gz" class="btn btn-primary" style="font-size:1.05rem;">&#11015; Download ip-tools-0.1.2.tar.gz</a>
+                <a href="https://cgee.net/iptools/ip-tools-0.1.3.tar.gz" class="btn btn-primary" style="font-size:1.05rem;">&#11015; Download ip-tools-0.1.3.tar.gz</a>
                 <div class="pills">
                     <span class="pill">MIT licensed</span>
                     <span class="pill">~20 KB</span>

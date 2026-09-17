@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Planned
+
+- Optional `iptools_config.php` for per-tool settings, never overwritten by
+  releases, so upgrades become a straight file replacement (config currently
+  lives at the top of each tool file and must be re-applied after upgrading).
+
+## [0.1.3] - 09-16-2026
+
 ### Security
 
 - SSRF guard bypass: numeric host shorthand (`127.1`, `2130706433`,
@@ -38,12 +46,6 @@ All notable changes to this project will be documented in this file.
   PHP < 8.1, and lines too long for PCRE are shown uncolored instead of blank.
 - Hostnames containing whitespace are rejected instead of silently having
   the spaces stripped.
-
-### Planned
-
-- Optional `iptools_config.php` for per-tool settings, never overwritten by
-  releases, so upgrades become a straight file replacement (config currently
-  lives at the top of each tool file and must be re-applied after upgrading).
 
 ## [0.1.2] - 07-12-2026
 
