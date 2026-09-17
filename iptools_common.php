@@ -55,7 +55,18 @@ function iptools_csrf_ok(): bool {
  * Returns true when the limit is exceeded (the request is NOT recorded).
  */
 function iptools_rate_limited(string $tool, int $maxRequests, int $timeFrame): bool {
-    $ip   = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+    $ip  = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+    $bin = @inet_pton($ip);
+    if ($bin !== false && strlen($bin) === 16) {
+        if (iptools_ip_in_cidr($bin, '::ffff:0:0/96')) {
+            // IPv4 client seen through a dual-stack socket
+            $ip = inet_ntop(substr($bin, 12, 4));
+        } else {
+            // An IPv6 client usually controls its whole /64; count it as one
+            // client so rotating addresses can't dodge the limit
+            $ip = bin2hex(substr($bin, 0, 8)) . '/64';
+        }
+    }
     $key  = hash('sha256', $ip); // don't store raw IPs in the shared temp file
     $file = sys_get_temp_dir() . '/iptools_ratelimit_' . preg_replace('/[^a-z0-9_-]/i', '', $tool) . '.json';
 
@@ -97,61 +108,164 @@ function iptools_rate_limited(string $tool, int $maxRequests, int $timeFrame): b
 
 /**
  * Sanitize and validate user input as a hostname or IP address.
+ * Internationalized names are converted to punycode when the intl
+ * extension is available. $allowUnderscore permits DNS-only names such as
+ * _dmarc.example.com (valid in DNS, not as a hostname).
  * Returns the cleaned value, or false if invalid.
  */
-function iptools_validate_host(string $input) {
-    $input = preg_replace('/\s+/', '', trim($input));
-    if ($input === '' || strlen($input) > 253) {
+function iptools_validate_host(string $input, bool $allowUnderscore = false) {
+    $input = trim($input);
+    if ($input === '' || preg_match('/\s/', $input)) {
         return false;
     }
     if (filter_var($input, FILTER_VALIDATE_IP) !== false) {
         return $input;
     }
-    if (filter_var($input, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME) !== false) {
-        return $input;
+    if (preg_match('/[^\x00-\x7F]/', $input)) {
+        if (!function_exists('idn_to_ascii')) {
+            return false;
+        }
+        $input = idn_to_ascii($input, IDNA_NONTRANSITIONAL_TO_ASCII, INTL_IDNA_VARIANT_UTS46);
+        if ($input === false) {
+            return false;
+        }
     }
-    return false;
+    if (strlen($input) > 253) {
+        return false;
+    }
+    // Labels never start or end with a hyphen, so nothing can reach a
+    // command line looking like an option
+    $label = $allowUnderscore
+        ? '[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?'
+        : '[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?';
+    if (!preg_match('/^' . $label . '(?:\.' . $label . ')*\.?$/', $input)) {
+        return false;
+    }
+    return $input;
+}
+
+/**
+ * True when the packed address ($bin, from inet_pton) is inside $cidr.
+ */
+function iptools_ip_in_cidr(string $bin, string $cidr): bool {
+    [$net, $bits] = explode('/', $cidr);
+    $netBin = inet_pton($net);
+    if ($netBin === false || strlen($netBin) !== strlen($bin)) {
+        return false;
+    }
+    $bits  = (int)$bits;
+    $bytes = intdiv($bits, 8);
+    $rem   = $bits % 8;
+    if ($bytes > 0 && strncmp($bin, $netBin, $bytes) !== 0) {
+        return false;
+    }
+    if ($rem === 0) {
+        return true;
+    }
+    $mask = (0xFF << (8 - $rem)) & 0xFF;
+    return (ord($bin[$bytes]) & $mask) === (ord($netBin[$bytes]) & $mask);
 }
 
 /**
  * True when the IP is publicly routable (not RFC1918 / loopback /
- * link-local / other reserved space).
+ * link-local / CGNAT / other special-purpose space). IPv6 forms that
+ * embed an IPv4 address are judged by the embedded address.
  */
 function iptools_is_public_ip(string $ip): bool {
-    return filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) !== false;
+    if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false) {
+        return false;
+    }
+    if (defined('FILTER_FLAG_GLOBAL_RANGE')
+        && filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_GLOBAL_RANGE) === false) {
+        return false; // PHP 8.2+: the full IANA special-purpose registry
+    }
+    $bin = inet_pton($ip);
+    if ($bin === false) {
+        return false;
+    }
+
+    // IPv4-mapped, NAT64 well-known prefix, 6to4: check the IPv4 inside
+    if (strlen($bin) === 16) {
+        foreach (['::ffff:0:0/96' => 12, '64:ff9b::/96' => 12, '2002::/16' => 2] as $cidr => $offset) {
+            if (iptools_ip_in_cidr($bin, $cidr)) {
+                return iptools_is_public_ip(inet_ntop(substr($bin, $offset, 4)));
+            }
+        }
+    }
+
+    // Ranges older PHP versions don't treat as private/reserved
+    $blocked = [
+        '100.64.0.0/10',  // carrier-grade NAT
+        '192.0.0.0/24',   // IETF protocol assignments
+        '198.18.0.0/15',  // benchmarking
+        '224.0.0.0/4',    // multicast
+        '64:ff9b:1::/48', // local-use NAT64
+        '2001::/32',      // Teredo (embedded IPv4 is obfuscated)
+        '2001:db8::/32',  // documentation
+        'fc00::/7',       // unique local
+        'fe80::/10',      // link-local
+        'ff00::/8',       // multicast
+    ];
+    foreach ($blocked as $cidr) {
+        if (iptools_ip_in_cidr($bin, $cidr)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 /**
  * SSRF / internal-probe guard for the active network tools (ping,
- * traceroute, mtr). When $allowPrivate is false, refuse any target that
- * is — or resolves to — a private or reserved address, so a public
- * deployment can't be used to map the internal network.
+ * traceroute, mtr). Returns what the probe binary should be pointed at,
+ * or false when the target is refused.
  *
- * Caveat: resolution here and resolution by the probe binary are two
- * separate lookups (DNS rebinding window). For a hardened deployment,
- * also firewall outbound traffic from the web server.
+ * With $allowPrivate the target passes through untouched (internal
+ * deployments may rely on /etc/hosts or search domains). Otherwise the
+ * name is resolved here and refused unless it resolves, and every address
+ * is public. The probe then gets the IP itself, never the name, so the
+ * binary can't resolve it differently: numeric shorthand like "127.1" or
+ * "2130706433", /etc/hosts entries, and DNS rebinding all fail closed.
  */
-function iptools_target_allowed(string $target, bool $allowPrivate): bool {
+function iptools_resolve_target(string $target, bool $allowPrivate) {
     if ($allowPrivate) {
-        return true;
+        return $target;
     }
     if (filter_var($target, FILTER_VALIDATE_IP) !== false) {
-        return iptools_is_public_ip($target);
+        return iptools_is_public_ip($target) ? $target : false;
     }
-    $ips = [];
-    foreach ((dns_get_record($target, DNS_A + DNS_AAAA) ?: []) as $rec) {
-        if (!empty($rec['ip']))   { $ips[] = $rec['ip']; }
-        if (!empty($rec['ipv6'])) { $ips[] = $rec['ipv6']; }
+    $v4 = [];
+    $v6 = [];
+    foreach ((@dns_get_record($target, DNS_A + DNS_AAAA) ?: []) as $rec) {
+        if (!empty($rec['ip']))   { $v4[] = $rec['ip']; }
+        if (!empty($rec['ipv6'])) { $v6[] = $rec['ipv6']; }
     }
+    $ips = array_merge($v4, $v6); // prefer IPv4, as the probe binaries do
     if (empty($ips)) {
-        return true; // unresolvable — let the underlying tool report the failure
+        return false;
     }
     foreach ($ips as $ip) {
         if (!iptools_is_public_ip($ip)) {
             return false;
         }
     }
-    return true;
+    return $ips[0];
+}
+
+/**
+ * Shell prefix that kills a command after $seconds, so a hung whois
+ * server or black-holed traceroute can't pin a PHP worker. Empty when
+ * coreutils timeout isn't available (e.g. Windows).
+ */
+function iptools_timeout_prefix(int $seconds): string {
+    if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
+        return '';
+    }
+    foreach (['/usr/bin/timeout', '/bin/timeout'] as $bin) {
+        if (@is_executable($bin)) {
+            return escapeshellarg($bin) . ' ' . (int)$seconds . ' ';
+        }
+    }
+    return '';
 }
 
 /**
@@ -248,14 +362,18 @@ function iptools_highlight(string $raw, string $tool): string {
         ];
     }
 
+    // ENT_SUBSTITUTE: registries often answer in Latin-1; without it PHP < 8.1
+    // returns '' for invalid UTF-8 and the whole line disappears
+    $flags = ENT_QUOTES | ENT_SUBSTITUTE;
+
     if (!isset($rulesets[$tool])) {
-        return htmlspecialchars($raw);
+        return htmlspecialchars($raw, $flags, 'UTF-8');
     }
 
     $rules = $rulesets[$tool];
     $out   = [];
     foreach (preg_split('/\r\n|\r|\n/', $raw) as $line) {
-        $esc     = htmlspecialchars($line);
+        $esc     = htmlspecialchars($line, $flags, 'UTF-8');
         $wrapped = false;
         foreach ($rules['line'] as $r) {
             if (preg_match('~(?:' . $r[0] . ')~' . $r[1], $line)) {
@@ -266,11 +384,16 @@ function iptools_highlight(string $raw, string $tool): string {
         }
         if (!$wrapped) {
             foreach ($rules['token'] as $r) {
-                $esc = preg_replace(
+                $highlighted = preg_replace(
                     '~(?:' . $r[0] . ')(?![^<]*</span>)~' . $r[1],
                     '<span class="' . $r[2] . '">$0</span>',
                     $esc
                 );
+                // null = PCRE hit its backtrack limit (huge remote-supplied
+                // line); keep the line uncolored rather than blanking it
+                if ($highlighted !== null) {
+                    $esc = $highlighted;
+                }
             }
             $out[] = $esc;
         }

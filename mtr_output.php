@@ -12,12 +12,13 @@ header('Content-Type: text/html; charset=UTF-8');
 header('X-Content-Type-Options: nosniff');
 header('Cache-Control: no-store');
 
-// Sanitize the session id before using it in a filesystem path, in case
-// session.use_strict_mode is disabled and the client supplied its own id.
-$sid      = preg_replace('/[^a-zA-Z0-9,-]/', '', session_id());
-$tempFile = __DIR__ . '/tmp/mtr_' . $sid . '.log';
+// The output file is named by a random id mtr.php stored in the session
+// (never the session id itself, which must not appear on disk).
+$id       = (string)($_SESSION['iptools_mtr_id'] ?? '');
+$tempFile = __DIR__ . '/tmp/mtr_' . $id . '.log';
+session_write_close(); // don't hold the session lock while polling
 
-if ($sid !== '' && is_file($tempFile)) {
+if (preg_match('/^[0-9a-f]{32}$/', $id) && is_file($tempFile)) {
     echo iptools_highlight((string)file_get_contents($tempFile), 'mtr');
 } else {
     echo 'No output available yet.';

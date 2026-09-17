@@ -12,12 +12,14 @@ $enableLogging       = true;  // Log queries to logs/ping.log
 $allowPrivateTargets = false; // Set true to permit pinging RFC1918/reserved addresses
 $maxRequests         = 100;   // Rate limit: max requests ...
 $timeFrame           = 3600;  // ... per this many seconds, per client IP
+$commandTimeout      = 30;    // Kill the ping after this many seconds
 
 [$nonce, $csrf] = iptools_boot();
 
 $error  = null;
 $output = null;
 $target = null;
+$probe  = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!iptools_csrf_ok()) {
@@ -28,19 +30,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $target = iptools_validate_host((string)($_POST['domain'] ?? ''));
         if ($target === false) {
             $error = 'Invalid domain or IP address. Please enter a valid input.';
-        } elseif (!iptools_target_allowed($target, $allowPrivateTargets)) {
-            $error = 'Target is (or resolves to) a private/reserved address. Probe refused.';
+        } elseif (($probe = iptools_resolve_target($target, $allowPrivateTargets)) === false) {
+            $error = 'Target does not resolve, or resolves to a private/reserved address. Probe refused.';
         } else {
-            $escapedTarget = escapeshellarg($target);
+            $escapedTarget = escapeshellarg($probe);
             $isWindows     = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
-            $isIPv6        = filter_var($target, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false;
+            $isIPv6        = filter_var($probe, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false;
 
             if ($isWindows) {
                 $cmd = "ping -n 5 $escapedTarget";
             } elseif ($isIPv6) {
-                $cmd = "ping -6 -c 5 $escapedTarget";
+                $cmd = iptools_timeout_prefix($commandTimeout) . "ping -6 -c 5 $escapedTarget";
             } else {
-                $cmd = "ping -c 5 $escapedTarget";
+                $cmd = iptools_timeout_prefix($commandTimeout) . "ping -c 5 $escapedTarget";
             }
 
             $output = shell_exec($cmd . ' 2>&1');
@@ -71,7 +73,8 @@ if ($error !== null) {
     echo "<p class='error-message'>" . htmlspecialchars($error) . "</p>";
 } elseif ($output !== null) {
     echo "<div class='output-item'>";
-    echo "<span class='out-label'>ping " . htmlspecialchars($target) . "</span>";
+    echo "<span class='out-label'>ping " . htmlspecialchars($target)
+       . ($probe !== $target ? ' (' . htmlspecialchars($probe) . ')' : '') . "</span>";
     echo "<pre>" . iptools_highlight($output, 'ping') . "</pre>";
     echo "</div>";
 }

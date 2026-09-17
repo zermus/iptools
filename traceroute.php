@@ -13,12 +13,14 @@ $allowPrivateTargets = false; // Set true to permit tracing to RFC1918/reserved 
 $maxRequests         = 100;   // Rate limit: max requests ...
 $timeFrame           = 3600;  // ... per this many seconds, per client IP
 $maxHops             = 20;    // Cap hop count so runs can't hang the request
+$commandTimeout      = 60;    // Kill the traceroute after this many seconds
 
 [$nonce, $csrf] = iptools_boot();
 
 $error  = null;
 $output = null;
 $target = null;
+$probe  = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!iptools_csrf_ok()) {
@@ -29,17 +31,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $target = iptools_validate_host((string)($_POST['domain'] ?? ''));
         if ($target === false) {
             $error = 'Invalid domain or IP address. Please enter a valid input.';
-        } elseif (!iptools_target_allowed($target, $allowPrivateTargets)) {
-            $error = 'Target is (or resolves to) a private/reserved address. Probe refused.';
+        } elseif (($probe = iptools_resolve_target($target, $allowPrivateTargets)) === false) {
+            $error = 'Target does not resolve, or resolves to a private/reserved address. Probe refused.';
         } else {
-            $escapedTarget = escapeshellarg($target);
+            $escapedTarget = escapeshellarg($probe);
             $hops          = (int)$maxHops;
             $isWindows     = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
 
             if ($isWindows) {
                 $cmd = "tracert -h $hops -w 2000 $escapedTarget";
             } else {
-                $cmd = "traceroute -m $hops -w 2 $escapedTarget";
+                $cmd = iptools_timeout_prefix($commandTimeout) . "traceroute -m $hops -w 2 $escapedTarget";
             }
 
             $output = shell_exec($cmd . ' 2>&1');
@@ -70,7 +72,8 @@ if ($error !== null) {
     echo "<p class='error-message'>" . htmlspecialchars($error) . "</p>";
 } elseif ($output !== null) {
     echo "<div class='output-item'>";
-    echo "<span class='out-label'>traceroute " . htmlspecialchars($target) . "</span>";
+    echo "<span class='out-label'>traceroute " . htmlspecialchars($target)
+       . ($probe !== $target ? ' (' . htmlspecialchars($probe) . ')' : '') . "</span>";
     echo "<pre>" . iptools_highlight($output, 'traceroute') . "</pre>";
     echo "</div>";
 }
