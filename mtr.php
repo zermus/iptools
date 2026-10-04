@@ -4,6 +4,7 @@
  * MIT License (c) 2024 Cody Gee — full text in LICENSE.txt
  */
 require __DIR__ . '/iptools_common.php';
+require __DIR__ . '/mtr_runtime.php';
 
 /**
  * Configuration
@@ -67,7 +68,10 @@ if (!empty($envErrors) && !$showDiagnostics) {
 // ===== Cleanup Old Output Logs =====
 foreach (glob($tempDir . 'mtr_*.log') ?: [] as $file) {
     if (is_file($file) && (time() - filemtime($file)) > $expiryTime) {
-        unlink($file);
+        $prefix = substr($file, 0, -4);
+        @unlink($file);
+        @unlink($prefix . '.active');
+        @unlink($prefix . '.done');
     }
 }
 
@@ -89,41 +93,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($probe === false) {
             $error = 'Target does not resolve, or resolves to a private/reserved address. Probe refused.';
         } else {
-            // One output file per session, named by a random id rather than
-            // the session id so a leaked tmp/ listing can't hijack sessions.
-            if (empty($_SESSION['iptools_mtr_id'])) {
-                $_SESSION['iptools_mtr_id'] = bin2hex(random_bytes(16));
-            }
-            $tempFile = $tempDir . 'mtr_' . $_SESSION['iptools_mtr_id'] . '.log';
-
-            // Count runs in flight and claim a slot under a lock. Report mode
-            // writes nothing until mtr finishes, so an empty, recent file is
-            // a run still going.
-            $lock = @fopen($tempDir . '.mtr.lock', 'c');
-            if ($lock !== false) {
-                flock($lock, LOCK_EX);
-            }
-            clearstatcache();
-            $running = 0;
-            foreach (glob($tempDir . 'mtr_*.log') ?: [] as $file) {
-                if ($file !== $tempFile && filesize($file) === 0
-                    && time() - filemtime($file) <= $tracerouteTimeout + 5) {
-                    $running++;
-                }
-            }
-
-            if ($running >= $maxConcurrent) {
+            $reservation = iptools_mtr_reserve($tempDir, $maxConcurrent, $tracerouteTimeout);
+            if ($reservation['status'] === 'busy') {
                 $error = 'The server is busy with other traces. Please try again in a minute.';
+            } elseif ($reservation['status'] !== 'ok') {
+                $error = 'Unable to reserve a trace slot. Please try again later.';
             } else {
-                file_put_contents($tempFile, '');
-                $cmd = '(' . $mtrEnv . iptools_timeout_prefix($tracerouteTimeout) . $mtrCommand
-                     . ' -rw -c 10 ' . escapeshellarg($probe) . ') > ' . escapeshellarg($tempFile) . ' 2>&1 &';
-                exec($cmd);
-            }
-
-            if ($lock !== false) {
-                flock($lock, LOCK_UN);
-                fclose($lock);
+                $runId = $reservation['id'];
+                $cmd = $mtrEnv . iptools_timeout_prefix($tracerouteTimeout) . $mtrCommand
+                     . ' -rw -c 10 ' . escapeshellarg($probe);
+                if (!iptools_mtr_launch($cmd, $tempDir, $runId)) {
+                    $error = 'Unable to start MTR. Please try again later.';
+                } else {
+                    if (!isset($_SESSION['iptools_mtr_runs']) || !is_array($_SESSION['iptools_mtr_runs'])) {
+                        $_SESSION['iptools_mtr_runs'] = [];
+                    }
+                    $_SESSION['iptools_mtr_runs'][$runId] = time();
+                    if (count($_SESSION['iptools_mtr_runs']) > 20) {
+                        asort($_SESSION['iptools_mtr_runs']);
+                        $_SESSION['iptools_mtr_runs'] = array_slice(
+                            $_SESSION['iptools_mtr_runs'],
+                            -20,
+                            null,
+                            true
+                        );
+                    }
+                }
             }
         }
 
@@ -143,16 +138,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </div>
             <script nonce="<?php echo $nonce; ?>">
                 var pollingInterval;
-                var tracerouteTimeout = <?php echo (int)$tracerouteTimeout * 1000; ?>; // ms
+
+                function stopPolling() {
+                    clearInterval(pollingInterval);
+                    document.getElementById("spinner").style.display = "none";
+                }
 
                 function fetchOutput() {
-                    fetch("mtr_output.php")
-                        .then(function (response) { return response.text(); })
-                        .then(function (data) {
+                    fetch("mtr_output.php?run=<?php echo rawurlencode($runId); ?>")
+                        .then(function (response) {
+                            return response.text().then(function (data) {
+                                return { data: data, status: response.headers.get("X-IPTools-MTR-Status") };
+                            });
+                        })
+                        .then(function (result) {
                             // Server-highlighted fragment (escaped server-side)
-                            document.getElementById("output").innerHTML = data;
-                            if (data.trim() !== "" && !data.includes("No output available yet.")) {
-                                document.getElementById("spinner").style.display = "none";
+                            document.getElementById("output").innerHTML = result.data;
+                            if (result.status !== "running") {
+                                stopPolling();
                             }
                         })
                         .catch(function (error) {
@@ -161,12 +164,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
                 window.onload = function () {
-                    fetchOutput();
                     pollingInterval = setInterval(fetchOutput, 5000);
-                    setTimeout(function () {
-                        clearInterval(pollingInterval);
-                        document.getElementById("spinner").style.display = "none";
-                    }, tracerouteTimeout);
+                    fetchOutput();
                 };
             </script>
             <?php
