@@ -14,16 +14,32 @@
  */
 
 /**
+ * Start the hardened session shared by full pages and companion endpoints.
+ */
+function iptools_start_session(): bool {
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        return true;
+    }
+
+    ini_set('session.use_strict_mode', '1');
+    $https = isset($_SERVER['HTTPS'])
+        && $_SERVER['HTTPS'] !== ''
+        && strtolower((string)$_SERVER['HTTPS']) !== 'off';
+    session_set_cookie_params([
+        'httponly' => true,
+        'samesite' => 'Lax',
+        'secure'   => $https,
+    ]);
+
+    return session_start();
+}
+
+/**
  * Start the hardened session, emit security headers, and return
  * [$nonce, $csrfToken]. Must be called before any output.
  */
 function iptools_boot(): array {
-    session_set_cookie_params([
-        'httponly' => true,
-        'samesite' => 'Lax',
-        'secure'   => !empty($_SERVER['HTTPS']),
-    ]);
-    session_start();
+    iptools_start_session();
 
     $nonce = base64_encode(random_bytes(16));
 
@@ -694,5 +710,5 @@ footer {
  * Close the themed page.
  */
 function iptools_page_close(): void {
-    echo "</div>\n<footer>iptools v0.1.3 — MIT licensed — [ all systems nominal ]</footer>\n</body>\n</html>\n";
+    echo "</div>\n<footer>iptools v0.1.4 — MIT licensed — [ all systems nominal ]</footer>\n</body>\n</html>\n";
 }

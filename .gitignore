@@ -4,7 +4,8 @@ tmp/
 *.log
 
 # Build output
-releases/
+releases/*
+!releases/*.md
 
 # OS cruft
 .DS_Store

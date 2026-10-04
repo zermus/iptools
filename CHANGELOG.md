@@ -10,6 +10,26 @@ All notable changes to this project will be documented in this file.
   releases, so upgrades become a straight file replacement (config currently
   lives at the top of each tool file and must be re-applied after upgrading).
 
+## [0.1.4] - 10-04-2026
+
+### Security
+
+- MTR runs now use unique output files and lock-protected active-run
+  reservations. Slot accounting fails closed and no longer depends on output
+  size, including for concurrent requests from one browser session.
+- The MTR poller now uses the shared hardened session setup, including strict
+  mode and consistent Secure, HttpOnly, and SameSite cookie attributes.
+
+### Fixed
+
+- MTR polling remains attached to the run that opened the results page and
+  reliably handles completion, launch failure, and timeout cleanup.
+
+### Tests
+
+- Added dependency-free regression coverage for MTR concurrency, output
+  isolation, reservation failures, lifecycle cleanup, and poller-first cookies.
+
 ## [0.1.3] - 09-16-2026
 
 ### Security
