@@ -12,13 +12,13 @@ DirectoryIndex index.php
     Require all denied
 </Files>
 
-# Query logs and MTR scratch output are for the server, not the world.
+# Query logs, MTR scratch output, and tests must not be served.
 # (The tools also drop a deny-all .htaccess into logs/ and tmp/ at runtime;
 #  this is belt-and-suspenders.) The optional prefix group matches both a
 # web-root install (/logs/) and a subdirectory install (/iptools/logs/).
-RedirectMatch 403 (?i)^(/.*)?/(logs|tmp)/
+RedirectMatch 403 (?i)^(/.*)?/(logs|tmp|tests)(/|$)
 
 <IfModule mod_rewrite.c>
     RewriteEngine On
-    RewriteRule ^(logs|tmp)(/|$) - [F,L]
+    RewriteRule ^(logs|tmp|tests)(/|$) - [F,L]
 </IfModule>

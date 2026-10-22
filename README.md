@@ -53,6 +53,30 @@ short pointer to that file instead of the full license text.
    location ^~ /path/to/iptools/tmp/  { deny all; }
    ```
 
+## Source checkouts and tests
+
+Release archives exclude `tests/`. When deploying a source checkout, remove that
+directory from the document root or deny all HTTP access to it. The supplied
+root and `tests/.htaccess` rules protect Apache deployments only when overrides
+are enabled. With `AllowOverride None`, put an equivalent `Require all denied`
+rule in the virtual host's `<Directory "/absolute/path/to/iptools/tests">`
+section. For Nginx, add these locations before PHP handling (adjust the prefix
+for your installation):
+
+```
+location = /path/to/iptools/tests { deny all; }
+location ^~ /path/to/iptools/tests/ { deny all; }
+```
+
+Other servers must enforce the same directory-wide denial; PHP guards do not
+protect static fixtures. Verify that both the directory and files beneath it
+return 403 or 404 without executing PHP, including in subdirectory installs.
+
+Run the suite locally with `php tests/run.php`. It requires process execution
+and loopback sockets, starts temporary PHP HTTP servers, and cleans them up.
+The runner is CLI-only; `poller_router.php` is an intentional local HTTP fixture
+for the CLI-launched PHP development server, not a deployable endpoint.
+
 ## Upgrading
 
 **From 0.1.x:** configuration lives at the top of each tool file

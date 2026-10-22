@@ -1,4 +1,9 @@
 <?php
+if (PHP_SAPI !== 'cli') {
+    http_response_code(404);
+    exit;
+}
+
 require dirname(__DIR__) . '/mtr_runtime.php';
 
 $failures = 0;
@@ -26,6 +31,57 @@ function remove_dir(string $dir): void {
         }
     }
     rmdir($dir);
+}
+
+$httpTemp = test_dir();
+$port = random_int(20000, 45000);
+$command = 'exec ' . escapeshellarg(PHP_BINARY)
+    . ' -d disable_functions=mkdir,exec,proc_open'
+    . ' -d ' . escapeshellarg('sys_temp_dir=' . $httpTemp)
+    . ' -d ' . escapeshellarg('session.save_path=' . $httpTemp)
+    . ' -S 127.0.0.1:' . $port . ' -t ' . escapeshellarg(dirname(__DIR__));
+$process = proc_open($command, [['pipe', 'r'], ['pipe', 'w'], ['pipe', 'w']], $pipes);
+if (is_resource($process)) {
+    fclose($pipes[0]);
+    stream_set_blocking($pipes[1], false);
+    stream_set_blocking($pipes[2], false);
+    try {
+        foreach (['/tests/run.php', '/tests/run.php/extra', '/tests/poller_router.php'] as $path) {
+            foreach (['GET', 'POST'] as $method) {
+                $context = stream_context_create(['http' => [
+                    'method' => $method, 'ignore_errors' => true, 'timeout' => 2,
+                ]]);
+                $body = false;
+                $headers = [];
+                for ($attempt = 0; $attempt < 30; $attempt++) {
+                    $http_response_header = [];
+                    $body = @file_get_contents('http://127.0.0.1:' . $port . $path, false, $context);
+                    $headers = $http_response_header;
+                    if ($headers !== []) {
+                        break;
+                    }
+                    usleep(50000);
+                }
+                check(strpos($headers[0] ?? '', '404') !== false && $body === '',
+                    "{$method} {$path} is rejected before side effects");
+            }
+        }
+        check((glob($httpTemp . '/*') ?: []) === [] && (glob($httpTemp . '/.*') ?: []) ===
+            [$httpTemp . '/.', $httpTemp . '/..'], 'HTTP requests create no test or session artifacts');
+        $errors = stream_get_contents($pipes[2]);
+        // Disabled side-effect functions make attempted filesystem or process work fail visibly.
+        check(strpos($errors, 'Fatal error') === false && strpos($errors, 'Warning:') === false,
+            'HTTP requests never reach filesystem or process-launch code');
+    } finally {
+        proc_terminate($process);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        proc_close($process);
+        remove_dir($httpTemp);
+    }
+} else {
+    check(false, 'HTTP guard test server starts');
+    remove_dir($httpTemp);
 }
 
 $dir = test_dir();
@@ -84,7 +140,7 @@ remove_dir($dir);
 
 $port = random_int(20000, 45000);
 $router = __DIR__ . '/poller_router.php';
-$command = escapeshellarg(PHP_BINARY) . ' -S 127.0.0.1:' . $port . ' ' . escapeshellarg($router);
+$command = 'exec ' . escapeshellarg(PHP_BINARY) . ' -S 127.0.0.1:' . $port . ' ' . escapeshellarg($router);
 $process = proc_open($command, [['pipe', 'r'], ['pipe', 'w'], ['pipe', 'w']], $pipes);
 if (is_resource($process)) {
     fclose($pipes[0]);

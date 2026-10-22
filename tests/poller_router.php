@@ -1,4 +1,10 @@
 <?php
+// Only serve as the CLI-launched development server's router, never as a page.
+if (PHP_SAPI !== 'cli-server' || realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
+    http_response_code(404);
+    exit;
+}
+
 $_SERVER['HTTPS'] = ($_GET['https'] ?? 'on') === 'off' ? 'off' : 'on';
 
 if (parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH) === '/seed.php') {
