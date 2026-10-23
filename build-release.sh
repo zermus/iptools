@@ -7,7 +7,7 @@
 # Run from the project root on a machine with tar (and gh for --publish).
 set -euo pipefail
 
-VERSION="0.1.4"
+VERSION="0.1.5"
 STAGE="ip-tools-${VERSION}"
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 OUT="${ROOT}/releases"

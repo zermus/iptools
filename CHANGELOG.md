@@ -10,6 +10,13 @@ All notable changes to this project will be documented in this file.
   releases, so upgrades become a straight file replacement (config currently
   lives at the top of each tool file and must be re-applied after upgrading).
 
+## [0.1.5] - 10-22-2026
+
+### Security
+
+- Restricted web access to test tooling in source checkouts and documented
+  required web-server protections. Release archives already exclude `tests/`.
+
 ## [0.1.4] - 10-04-2026
 
 ### Security
