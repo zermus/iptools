@@ -5,6 +5,7 @@ if (PHP_SAPI !== 'cli') {
 }
 
 require dirname(__DIR__) . '/mtr_runtime.php';
+require dirname(__DIR__) . '/iptools_common.php';
 
 $failures = 0;
 $tests = 0;
@@ -32,6 +33,15 @@ function remove_dir(string $dir): void {
     }
     rmdir($dir);
 }
+
+$buildScript = file_get_contents(dirname(__DIR__) . '/build-release.sh');
+$hasBuildVersion = preg_match('/^VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$/m', $buildScript, $buildVersion) === 1;
+check($hasBuildVersion, 'release builder declares a version');
+ob_start();
+iptools_page_close();
+$footer = ob_get_clean();
+check($hasBuildVersion && strpos($footer, '<footer>iptools v' . $buildVersion[1] . ' —') !== false,
+    'rendered footer matches the release build version');
 
 $httpTemp = test_dir();
 $port = random_int(20000, 45000);
