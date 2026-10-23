@@ -10,6 +10,18 @@ All notable changes to this project will be documented in this file.
   releases, so upgrades become a straight file replacement (config currently
   lives at the top of each tool file and must be re-applied after upgrading).
 
+## [0.1.6] - 10-23-2026
+
+### Fixed
+
+- Release 0.1.5 incorrectly displayed v0.1.4 in its footer; the footer now
+  correctly displays v0.1.6.
+
+### Tests
+
+- Added a version-drift regression check that compares the rendered footer
+  with the release builder's version.
+
 ## [0.1.5] - 10-22-2026
 
 ### Security
