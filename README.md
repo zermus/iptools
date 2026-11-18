@@ -94,6 +94,21 @@ is one of the things 0.1.0 fixed (logging now goes to the protected
 *Planned for 0.2.0:* an optional `iptools_config.php` (never overwritten by
 releases) so upgrades become a straight file replacement.
 
+For 0.1.7, reload open forms and in-flight MTR pages once: the cookie is now
+`IPTOOLSSESSID`, isolated from other PHP applications. A writable suite `tmp/`
+is recommended for shared rate-limit and probe-slot state; if absent or not
+writable these helpers use the system temporary directory. MTR still needs its
+writable `tmp/`. No database migration or new PHP requirement is needed.
+
+WHOIS, nslookup, ping and traceroute now share `$maxConcurrent = 8` probe slots
+and each has `$burstRequests = 5` per `$burstWindow = 60` seconds, in addition
+to the hourly limit. Keep the shared cap equal across all four tools and reapply
+local settings after extracting. Review the updated sudoers guidance below.
+
+Behind a TLS-terminating proxy, set `SetEnv HTTPS on` in the Apache backend
+vhost or have the proxy send `X-Forwarded-Proto: https` to mark cookies Secure.
+This header affects cookie security only; client limits still use `REMOTE_ADDR`.
+
 ## Requirements
 
 - PHP 7.3+ with the GMP extension (used by the IPv6 tools); PHP 8.2+
@@ -174,16 +189,19 @@ browser through Ajax polling (every 5 seconds).
    and the web server user to visitors.
 
 4. **Only if MTR won't run unprivileged**, set `$mtrUseSudo = true` and
-   grant sudo for exactly the command the tool runs (`sudo visudo`):
+   grant sudo for exactly the command the tool runs (`sudo visudo`, sudo 1.9.10+):
 
    ```
-   apache ALL=(root) NOPASSWD: /usr/sbin/mtr -rw -c 10 *     # RHEL/CentOS/Fedora
+   apache ALL=(root) NOPASSWD: /usr/sbin/mtr ^-rw -c 10 [0-9A-Fa-f\:.]+$     # RHEL/CentOS/Fedora
    # or
-   www-data ALL=(root) NOPASSWD: /usr/sbin/mtr -rw -c 10 *   # Debian/Ubuntu
+   www-data ALL=(root) NOPASSWD: /usr/sbin/mtr ^-rw -c 10 [0-9A-Fa-f\:.]+$   # Debian/Ubuntu
    ```
 
    Upgrading from 0.1.x with a bare `NOPASSWD: /usr/sbin/mtr` line? Narrow
-   it as above, or remove it if MTR works without sudo.
+   it as above (also replace older wildcard argument rules), or remove it if MTR works without sudo.
+   The colon is escaped for sudoers, not for the regular expression.
+   With older sudo, do not enable sudo mode; use
+   `setcap cap_net_raw+ep /usr/sbin/mtr-packet` (adjust the binary path) instead.
 
 ### Notes
 

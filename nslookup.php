@@ -25,6 +25,10 @@ $queryTypes = [
     'PTR'  => 'PTR - Reverse Lookup',
 ];
 
+$maxConcurrent = 8;
+$burstRequests = 5;
+$burstWindow = 60;
+
 [$nonce, $csrf] = iptools_boot();
 
 $error     = null;
@@ -33,55 +37,63 @@ $target    = null;
 $queryType = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $queryType = (string)($_POST['queryType'] ?? '');
+    $queryType = iptools_post_string('queryType');
     if (!iptools_csrf_ok()) {
         $error = 'Invalid or expired form token. Please resubmit.';
-    } elseif (!array_key_exists($queryType, $queryTypes)) {
-        $error = 'Invalid query type.';
+    } elseif (iptools_rate_limited('nslookup-burst', $burstRequests, $burstWindow)) {
+        $error = 'Rate limit exceeded. Please try again later.';
     } elseif (iptools_rate_limited('nslookup', $maxRequests, $timeFrame)) {
         $error = 'Rate limit exceeded. Please try again later.';
+    } elseif (($slot = iptools_probe_acquire($maxConcurrent)) === false) {
+        $error = 'The server is busy. Please try again in a minute.';
     } else {
-        // Underscores allowed: _dmarc, _domainkey, _mta-sts etc. are DNS names
-        $target = iptools_validate_host((string)($_POST['domain'] ?? ''), true);
-        if ($target === false) {
-            $error = 'Invalid domain name or IP address. Please enter a valid input.';
-        } elseif ($queryType === 'PTR' && filter_var($target, FILTER_VALIDATE_IP) === false) {
-            $error = 'PTR lookups require a valid IPv4 or IPv6 address.';
-        } elseif ($queryType !== 'PTR' && filter_var($target, FILTER_VALIDATE_IP) !== false) {
-            $error = 'Forward lookups require a domain name, not an IP address (use PTR for reverse).';
-        } else {
-            $queryValue = $target;
+        try {
+            // Underscores allowed: _dmarc, _domainkey, _mta-sts etc. are DNS names
+            $target = iptools_validate_host(iptools_post_string('domain'), true);
+            if (!array_key_exists($queryType, $queryTypes)) {
+                $error = 'Invalid query type.';
+            } elseif ($target === false) {
+                $error = 'Invalid domain name or IP address. Please enter a valid input.';
+            } elseif ($queryType === 'PTR' && filter_var($target, FILTER_VALIDATE_IP) === false) {
+                $error = 'PTR lookups require a valid IPv4 or IPv6 address.';
+            } elseif ($queryType !== 'PTR' && filter_var($target, FILTER_VALIDATE_IP) !== false) {
+                $error = 'Forward lookups require a domain name, not an IP address (use PTR for reverse).';
+            } else {
+                $queryValue = $target;
 
-            // Convert PTR targets to their reverse-DNS form
-            if ($queryType === 'PTR') {
-                if (filter_var($target, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false) {
-                    $packed = inet_pton($target);
-                    if ($packed === false) {
-                        $error = 'Failed to process the IPv6 address.';
+                // Convert PTR targets to their reverse-DNS form
+                if ($queryType === 'PTR') {
+                    if (filter_var($target, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false) {
+                        $packed = inet_pton($target);
+                        if ($packed === false) {
+                            $error = 'Failed to process the IPv6 address.';
+                        } else {
+                            $hex        = bin2hex($packed);
+                            $queryValue = implode('.', str_split(strrev($hex), 1)) . '.ip6.arpa';
+                        }
                     } else {
-                        $hex        = bin2hex($packed);
-                        $queryValue = implode('.', str_split(strrev($hex), 1)) . '.ip6.arpa';
+                        $queryValue = implode('.', array_reverse(explode('.', $target))) . '.in-addr.arpa';
                     }
-                } else {
-                    $queryValue = implode('.', array_reverse(explode('.', $target))) . '.in-addr.arpa';
+                }
+
+                if ($error === null) {
+                    $escapedQuery     = escapeshellarg($queryValue);
+                    $escapedDnsServer = escapeshellarg($dnsServer);
+                    // $queryType is whitelisted above, safe to interpolate
+                    $output = shell_exec(iptools_timeout_prefix($commandTimeout)
+                        . "nslookup -type={$queryType} {$escapedQuery} {$escapedDnsServer} 2>&1");
+
+                    if ($output) {
+                        if ($enableLogging) {
+                            iptools_log('nslookup', $queryType . ' - ' . $target);
+                        }
+                    } else {
+                        $error = 'No response from the DNS server.';
+                    }
                 }
             }
-
-            if ($error === null) {
-                $escapedQuery     = escapeshellarg($queryValue);
-                $escapedDnsServer = escapeshellarg($dnsServer);
-                // $queryType is whitelisted above, safe to interpolate
-                $output = shell_exec(iptools_timeout_prefix($commandTimeout)
-                    . "nslookup -type={$queryType} {$escapedQuery} {$escapedDnsServer} 2>&1");
-
-                if ($output) {
-                    if ($enableLogging) {
-                        iptools_log('nslookup', $queryType . ' - ' . $target);
-                    }
-                } else {
-                    $error = 'No response from the DNS server.';
-                }
-            }
+        } finally {
+            iptools_probe_release($slot);
         }
     }
 }

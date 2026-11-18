@@ -7,7 +7,7 @@
 # Run from the project root on a machine with tar (and gh for --publish).
 set -euo pipefail
 
-VERSION="0.1.6"
+VERSION="0.1.7"
 STAGE="ip-tools-${VERSION}"
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 OUT="${ROOT}/releases"
@@ -28,6 +28,9 @@ cp -- .htaccess README.md CHANGELOG.md LICENSE.txt "$DEST/"
 
 # Scrub anything that shouldn't ship.
 find "$DEST" -name '.DS_Store' -delete 2>/dev/null || true
+
+find "$DEST" -type d -exec chmod 0755 {} +
+find "$DEST" -type f -exec chmod 0644 {} +
 
 mkdir -p "$OUT"
 echo ">> Creating ${OUT}/${STAGE}.tar.gz ..."

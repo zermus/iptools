@@ -53,7 +53,7 @@ if (!@is_executable($mtrPath)) {
         if ($rc !== 0) {
             $envErrors[] = 'The web server user may not run MTR via sudo. Add this line via visudo:<br>'
                          . '<code>' . htmlspecialchars(trim((string)shell_exec('whoami')))
-                         . ' ALL=(root) NOPASSWD: ' . htmlspecialchars($mtrPath) . ' -rw -c 10 *</code>';
+                         . ' ALL=(root) NOPASSWD: ' . htmlspecialchars($mtrPath) . ' ^-rw -c 10 [0-9A-Fa-f\\:.]+$</code>';
         }
     } elseif (!shell_exec($mtrEnv . $mtrCommand . ' --version 2>/dev/null')) {
         $envErrors[] = 'MTR did not run as the web server user. Check that mtr-packet is setuid/has '
@@ -86,7 +86,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif (iptools_rate_limited('mtr', $maxRequests, $timeFrame)) {
         $error = 'Rate limit exceeded. Please try again later.';
     } else {
-        $target = iptools_validate_host((string)($_POST['domain'] ?? ''));
+        $target = iptools_validate_host(iptools_post_string('domain'));
         $probe  = $target === false ? false : iptools_resolve_target($target, $allowPrivateTargets);
         if ($target === false) {
             $error = 'Invalid domain or IP address. Please enter a valid value.';

@@ -14,6 +14,10 @@ $maxRequests         = 100;   // Rate limit: max requests ...
 $timeFrame           = 3600;  // ... per this many seconds, per client IP
 $commandTimeout      = 30;    // Kill the ping after this many seconds
 
+$maxConcurrent = 8;
+$burstRequests = 5;
+$burstWindow = 60;
+
 [$nonce, $csrf] = iptools_boot();
 
 $error  = null;
@@ -24,35 +28,43 @@ $probe  = null;
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!iptools_csrf_ok()) {
         $error = 'Invalid or expired form token. Please resubmit.';
+    } elseif (iptools_rate_limited('ping-burst', $burstRequests, $burstWindow)) {
+        $error = 'Rate limit exceeded. Please try again later.';
     } elseif (iptools_rate_limited('ping', $maxRequests, $timeFrame)) {
         $error = 'Rate limit exceeded. Please try again later.';
+    } elseif (($slot = iptools_probe_acquire($maxConcurrent)) === false) {
+        $error = 'The server is busy. Please try again in a minute.';
     } else {
-        $target = iptools_validate_host((string)($_POST['domain'] ?? ''));
-        if ($target === false) {
-            $error = 'Invalid domain or IP address. Please enter a valid input.';
-        } elseif (($probe = iptools_resolve_target($target, $allowPrivateTargets)) === false) {
-            $error = 'Target does not resolve, or resolves to a private/reserved address. Probe refused.';
-        } else {
-            $escapedTarget = escapeshellarg($probe);
-            $isWindows     = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
-            $isIPv6        = filter_var($probe, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false;
-
-            if ($isWindows) {
-                $cmd = "ping -n 5 $escapedTarget";
-            } elseif ($isIPv6) {
-                $cmd = iptools_timeout_prefix($commandTimeout) . "ping -6 -c 5 $escapedTarget";
+        try {
+            $target = iptools_validate_host(iptools_post_string('domain'));
+            if ($target === false) {
+                $error = 'Invalid domain or IP address. Please enter a valid input.';
+            } elseif (($probe = iptools_resolve_target($target, $allowPrivateTargets)) === false) {
+                $error = 'Target does not resolve, or resolves to a private/reserved address. Probe refused.';
             } else {
-                $cmd = iptools_timeout_prefix($commandTimeout) . "ping -c 5 $escapedTarget";
-            }
+                $escapedTarget = escapeshellarg($probe);
+                $isWindows     = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
+                $isIPv6        = filter_var($probe, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false;
 
-            $output = shell_exec($cmd . ' 2>&1');
-            if ($output) {
-                if ($enableLogging) {
-                    iptools_log('ping', $target);
+                if ($isWindows) {
+                    $cmd = "ping -n 5 $escapedTarget";
+                } elseif ($isIPv6) {
+                    $cmd = iptools_timeout_prefix($commandTimeout) . "ping -6 -c 5 $escapedTarget";
+                } else {
+                    $cmd = iptools_timeout_prefix($commandTimeout) . "ping -c 5 $escapedTarget";
                 }
-            } else {
-                $error = 'Ping command returned no output.';
+
+                $output = shell_exec($cmd . ' 2>&1');
+                if ($output) {
+                    if ($enableLogging) {
+                        iptools_log('ping', $target);
+                    }
+                } else {
+                    $error = 'Ping command returned no output.';
+                }
             }
+        } finally {
+            iptools_probe_release($slot);
         }
     }
 }
