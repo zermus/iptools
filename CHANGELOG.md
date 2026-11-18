@@ -10,6 +10,42 @@ All notable changes to this project will be documented in this file.
   releases, so upgrades become a straight file replacement (config currently
   lives at the top of each tool file and must be re-applied after upgrading).
 
+## [0.1.7] - 11-18-2026
+
+### Security
+
+- WHOIS, nslookup, ping and traceroute share eight in-flight probe slots and
+  enforce five requests per minute per client alongside existing hourly limits.
+- Harden rate-limit state recovery, private state permissions and failure logging.
+  Shared probe admission fails closed and locks are released when workers exit.
+- Reject non-string form inputs and additional special-purpose IPv6 targets,
+  while retaining public embedded IPv4 support.
+- Isolate sessions with IPTOOLSSESSID; support Secure cookies behind TLS proxies.
+- Restrict documented sudo arguments to numeric targets with sudo 1.9.10+.
+
+### Fixed
+
+- Show both usable addresses for IPv4 /31 networks; /32 remains N/A.
+- Normalize ULA addresses consistently and update the website and analytics.
+- Normalize checkout line endings and release archive permissions.
+
+### Tests
+
+- Extend state, slot, input, IP, session and poller ownership regressions.
+- Assert fixture seeding before ownership checks and guard router path-info.
+
+### Upgrading
+
+- A writable shared tmp/ is recommended for shell-tool state, not required by
+  the new helpers: they fall back to the system temporary directory. MTR still
+  requires its writable tmp/ directory.
+- Reload open forms and in-flight MTR pages after the cookie name change.
+- Replace old sudoers rules with the anchored numeric-address rule in README;
+  older sudo installations should use mtr-packet cap_net_raw+ep without sudo mode.
+- Reapply local tool edits after extracting. WHOIS, nslookup, ping and traceroute
+  add/reset $maxConcurrent (8), $burstRequests (5) and $burstWindow (60 seconds).
+  Keep the shared cap consistent. There are no database migrations.
+
 ## [0.1.6] - 10-23-2026
 
 ### Fixed

@@ -21,10 +21,12 @@ function iptools_start_session(): bool {
         return true;
     }
 
+    session_name('IPTOOLSSESSID');
     ini_set('session.use_strict_mode', '1');
     $https = isset($_SERVER['HTTPS'])
         && $_SERVER['HTTPS'] !== ''
         && strtolower((string)$_SERVER['HTTPS']) !== 'off';
+    $https = $https || strcasecmp($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '', 'https') === 0;
     session_set_cookie_params([
         'httponly' => true,
         'samesite' => 'Lax',
@@ -56,13 +58,65 @@ function iptools_boot(): array {
     return [$nonce, $_SESSION['iptools_csrf']];
 }
 
-/**
- * Validate the CSRF token on a POST submission.
- */
+function iptools_post_string(string $key): string {
+    return isset($_POST[$key]) && is_string($_POST[$key]) ? $_POST[$key] : '';
+}
+
 function iptools_csrf_ok(): bool {
-    return isset($_POST['csrf'])
-        && is_string($_POST['csrf'])
-        && hash_equals($_SESSION['iptools_csrf'] ?? '', $_POST['csrf']);
+    $token = iptools_post_string('csrf');
+    return $token !== '' && hash_equals($_SESSION['iptools_csrf'] ?? '', $token);
+}
+
+function iptools_state_dir(): string {
+    $preferred = __DIR__ . '/tmp';
+    return is_dir($preferred) && is_writable($preferred) ? $preferred : sys_get_temp_dir();
+}
+
+function iptools_state_open(string $file, string $context) {
+    $mask = umask(0077);
+    try {
+        $fh = @fopen($file, 'c+');
+    } finally {
+        umask($mask);
+    }
+    if ($fh === false) {
+        $reason = error_get_last();
+        error_log($context . ': cannot open state file: ' . ($reason['message'] ?? 'unknown error'));
+        return false;
+    }
+    clearstatcache(true, $file);
+    if (!@chmod($file, 0600) || (fileperms($file) & 0777) !== 0600) {
+        error_log($context . ': cannot secure state file permissions');
+        fclose($fh);
+        return false;
+    }
+    return $fh;
+}
+
+function iptools_probe_acquire(int $maxConcurrent) {
+    for ($i = 0; $i < $maxConcurrent; $i++) {
+        $fh = iptools_state_open(iptools_state_dir() . '/.probe_slot_' . $i, 'Probe admission refused');
+        if ($fh === false) {
+            return false;
+        }
+        $wouldBlock = 0;
+        if (@flock($fh, LOCK_EX | LOCK_NB, $wouldBlock)) {
+            return $fh;
+        }
+        fclose($fh);
+        if (!$wouldBlock) {
+            error_log('Probe admission refused: cannot lock slot state');
+            return false;
+        }
+    }
+    return false;
+}
+
+function iptools_probe_release($slot): void {
+    if (is_resource($slot)) {
+        flock($slot, LOCK_UN);
+        fclose($slot);
+    }
 }
 
 /**
@@ -84,42 +138,49 @@ function iptools_rate_limited(string $tool, int $maxRequests, int $timeFrame): b
         }
     }
     $key  = hash('sha256', $ip); // don't store raw IPs in the shared temp file
-    $file = sys_get_temp_dir() . '/iptools_ratelimit_' . preg_replace('/[^a-z0-9_-]/i', '', $tool) . '.json';
+    $file = iptools_state_dir() . '/iptools_ratelimit_' . preg_replace('/[^a-z0-9_-]/i', '', $tool) . '.json';
 
-    $fh = @fopen($file, 'c+');
+    $fh = iptools_state_open($file, 'Rate limiting is off');
     if ($fh === false) {
-        return false; // fail open: a broken temp dir shouldn't take the tool down
+        return false;
     }
-    flock($fh, LOCK_EX);
-    $raw  = stream_get_contents($fh);
-    $data = $raw ? (json_decode($raw, true) ?: []) : [];
-    $now  = time();
-
-    // Prune stale entries across all clients so the file can't grow unbounded
-    foreach ($data as $k => $timestamps) {
-        $data[$k] = array_values(array_filter($timestamps, function ($t) use ($now, $timeFrame) {
-            return $t > $now - $timeFrame;
-        }));
-        if (empty($data[$k])) {
-            unset($data[$k]);
+    try {
+        if (!@flock($fh, LOCK_EX)) {
+            error_log('Rate limiting is off: cannot lock state file');
+            return false;
         }
+        $raw = stream_get_contents($fh);
+        $data = is_string($raw) ? json_decode($raw, true) : null;
+        $data = is_array($data) ? $data : [];
+        $now = time();
+        foreach ($data as $k => $timestamps) {
+            if (!is_array($timestamps) || count(array_filter($timestamps, 'is_int')) !== count($timestamps)) {
+                unset($data[$k]);
+                continue;
+            }
+            $data[$k] = array_values(array_filter($timestamps, function ($t) use ($now, $timeFrame) {
+                return $t > $now - $timeFrame;
+            }));
+            if (!$data[$k]) {
+                unset($data[$k]);
+            }
+        }
+        $hits = $data[$key] ?? [];
+        $limited = count($hits) >= $maxRequests;
+        if (!$limited) {
+            $hits[] = $now;
+            $data[$key] = $hits;
+        }
+        $encoded = json_encode($data);
+        if (!ftruncate($fh, 0) || !rewind($fh) || fwrite($fh, $encoded) !== strlen($encoded) || !fflush($fh)) {
+            error_log('Rate limiting is off: cannot write state file');
+            return false;
+        }
+        return $limited;
+    } finally {
+        flock($fh, LOCK_UN);
+        fclose($fh);
     }
-
-    $hits    = $data[$key] ?? [];
-    $limited = count($hits) >= $maxRequests;
-    if (!$limited) {
-        $hits[]     = $now;
-        $data[$key] = $hits;
-    }
-
-    ftruncate($fh, 0);
-    rewind($fh);
-    fwrite($fh, json_encode($data));
-    fflush($fh);
-    flock($fh, LOCK_UN);
-    fclose($fh);
-
-    return $limited;
 }
 
 /**
@@ -188,13 +249,6 @@ function iptools_ip_in_cidr(string $bin, string $cidr): bool {
  * embed an IPv4 address are judged by the embedded address.
  */
 function iptools_is_public_ip(string $ip): bool {
-    if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false) {
-        return false;
-    }
-    if (defined('FILTER_FLAG_GLOBAL_RANGE')
-        && filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_GLOBAL_RANGE) === false) {
-        return false; // PHP 8.2+: the full IANA special-purpose registry
-    }
     $bin = inet_pton($ip);
     if ($bin === false) {
         return false;
@@ -209,8 +263,17 @@ function iptools_is_public_ip(string $ip): bool {
         }
     }
 
+    if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false) {
+        return false;
+    }
+    if (defined('FILTER_FLAG_GLOBAL_RANGE')
+        && filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_GLOBAL_RANGE) === false) {
+        return false; // PHP 8.2+: the full IANA special-purpose registry
+    }
+
     // Ranges older PHP versions don't treat as private/reserved
     $blocked = [
+        '::/96',
         '100.64.0.0/10',  // carrier-grade NAT
         '192.0.0.0/24',   // IETF protocol assignments
         '198.18.0.0/15',  // benchmarking
@@ -710,5 +773,5 @@ footer {
  * Close the themed page.
  */
 function iptools_page_close(): void {
-    echo "</div>\n<footer>iptools v0.1.6 — MIT licensed — [ all systems nominal ]</footer>\n</body>\n</html>\n";
+    echo "</div>\n<footer>iptools v0.1.7 — MIT licensed — [ all systems nominal ]</footer>\n</body>\n</html>\n";
 }

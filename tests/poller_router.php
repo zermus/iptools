@@ -1,6 +1,6 @@
 <?php
 // Only serve as the CLI-launched development server's router, never as a page.
-if (PHP_SAPI !== 'cli-server' || realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
+if (PHP_SAPI !== 'cli-server' || preg_match('~(?:^|/)poller_router\.php(?:/|$)~', rawurldecode(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH)))) {
     http_response_code(404);
     exit;
 }

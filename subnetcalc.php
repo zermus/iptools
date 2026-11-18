@@ -78,7 +78,7 @@ function calculateSubnetInfo($cidr) {
     $broadcastIP = long2ip($broadcastLong);
 
     if ($maskLength >= 31) {
-        $usableRange = 'N/A';
+        $usableRange = $maskLength === 31 ? $networkIP . ' - ' . $broadcastIP : 'N/A';
         $usableHosts = $maskLength === 31 ? '2 (point-to-point)' : '1 (host route)';
     } else {
         $usableRange = long2ip($networkLong + 1) . ' - ' . long2ip($broadcastLong - 1);
@@ -105,7 +105,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif (iptools_rate_limited('subnetcalc', $maxRequests, $timeFrame)) {
         $error = 'Rate limit exceeded. Please try again later.';
     } else {
-        $query = sanitizeInput((string)($_POST['cidr'] ?? ''));
+        $query = sanitizeInput(iptools_post_string('cidr'));
         if ($query === false) {
             $error = 'Invalid input. Please enter a valid IPv4 CIDR notation or IP address with subnet mask.';
         } else {

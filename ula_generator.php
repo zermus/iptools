@@ -16,7 +16,7 @@ $subnet_size = null;
 $results     = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['subnet_size'])) {
-    $subnet_size = (int)$_POST['subnet_size'];
+    $subnet_size = (int)iptools_post_string('subnet_size');
     if (!iptools_csrf_ok()) {
         $error = 'Invalid or expired form token. Please resubmit.';
     } elseif ($subnet_size < 48 || $subnet_size > 64) {
@@ -26,13 +26,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['subnet_size'])) {
         $global_id = bin2hex(random_bytes(5));
 
         $ula_prefix_hex       = 'fd' . $global_id;
-        $ula_prefix_formatted = format_ipv6_address($ula_prefix_hex);
+        $ula_prefix_formatted = inet_ntop(inet_pton(format_ipv6_address($ula_prefix_hex) . '::'));
 
         // First /64 subnet
-        $first_subnet = $ula_prefix_formatted . '::/64';
+        $first_subnet = $ula_prefix_formatted . '/64';
 
         // Last /64 subnet: set all subnet bits (bits between the prefix and /64)
-        $prefix_bin  = inet_pton($ula_prefix_formatted . '::');
+        $prefix_bin  = inet_pton($ula_prefix_formatted);
         $prefix_int  = gmp_import($prefix_bin, 1, GMP_MSW_FIRST | GMP_BIG_ENDIAN);
         $subnet_bits = 64 - $subnet_size;
 
@@ -43,7 +43,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['subnet_size'])) {
         $last_subnet     = inet_ntop(pack('H*', $last_subnet_hex)) . '/64';
 
         $results = [
-            'prefix'      => $ula_prefix_formatted . '::/' . $subnet_size,
+            'prefix'      => $ula_prefix_formatted . '/' . $subnet_size,
             'num_subnets' => number_format(pow(2, $subnet_bits)),
             'first'       => $first_subnet,
             'last'        => $last_subnet,

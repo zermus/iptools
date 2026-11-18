@@ -13,6 +13,10 @@ $maxRequests   = 100;  // Rate limit: max requests ...
 $timeFrame     = 3600; // ... per this many seconds, per client IP
 $commandTimeout = 30;  // Kill the whois lookup after this many seconds
 
+$maxConcurrent = 8;
+$burstRequests = 5;
+$burstWindow = 60;
+
 [$nonce, $csrf] = iptools_boot();
 
 $error  = null;
@@ -22,23 +26,31 @@ $target = null;
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!iptools_csrf_ok()) {
         $error = 'Invalid or expired form token. Please resubmit.';
+    } elseif (iptools_rate_limited('whois-burst', $burstRequests, $burstWindow)) {
+        $error = 'Rate limit exceeded. Please try again later.';
     } elseif (iptools_rate_limited('whois', $maxRequests, $timeFrame)) {
         $error = 'Rate limit exceeded. Please try again later.';
+    } elseif (($slot = iptools_probe_acquire($maxConcurrent)) === false) {
+        $error = 'The server is busy. Please try again in a minute.';
     } else {
-        $target = iptools_validate_host((string)($_POST['domain'] ?? ''));
-        if ($target === false) {
-            $error = 'Invalid domain name or IP address. Please enter a valid input.';
-        } else {
-            $escapedTarget = escapeshellarg($target);
-            $output = shell_exec(iptools_timeout_prefix($commandTimeout) . "whois $escapedTarget 2>&1");
-
-            if ($output) {
-                if ($enableLogging) {
-                    iptools_log('whois', $target);
-                }
+        try {
+            $target = iptools_validate_host(iptools_post_string('domain'));
+            if ($target === false) {
+                $error = 'Invalid domain name or IP address. Please enter a valid input.';
             } else {
-                $error = 'No WHOIS information found for ' . $target . '.';
+                $escapedTarget = escapeshellarg($target);
+                $output = shell_exec(iptools_timeout_prefix($commandTimeout) . "whois $escapedTarget 2>&1");
+
+                if ($output) {
+                    if ($enableLogging) {
+                        iptools_log('whois', $target);
+                    }
+                } else {
+                    $error = 'No WHOIS information found for ' . $target . '.';
+                }
             }
+        } finally {
+            iptools_probe_release($slot);
         }
     }
 }

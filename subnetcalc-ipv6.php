@@ -111,7 +111,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         $display_full      = isset($_POST['display_full']);
         $calculate_subnets = isset($_POST['calculate_subnets']);
-        $query             = sanitizeAndValidateIPv6CIDR((string)($_POST['cidr'] ?? ''));
+        $query             = sanitizeAndValidateIPv6CIDR(iptools_post_string('cidr'));
 
         if ($query === false) {
             $error = 'Invalid input. Please enter a valid IPv6 CIDR notation.';

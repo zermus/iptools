@@ -15,6 +15,10 @@ $timeFrame           = 3600;  // ... per this many seconds, per client IP
 $maxHops             = 20;    // Cap hop count so runs can't hang the request
 $commandTimeout      = 60;    // Kill the traceroute after this many seconds
 
+$maxConcurrent = 8;
+$burstRequests = 5;
+$burstWindow = 60;
+
 [$nonce, $csrf] = iptools_boot();
 
 $error  = null;
@@ -25,33 +29,41 @@ $probe  = null;
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!iptools_csrf_ok()) {
         $error = 'Invalid or expired form token. Please resubmit.';
+    } elseif (iptools_rate_limited('traceroute-burst', $burstRequests, $burstWindow)) {
+        $error = 'Rate limit exceeded. Please try again later.';
     } elseif (iptools_rate_limited('traceroute', $maxRequests, $timeFrame)) {
         $error = 'Rate limit exceeded. Please try again later.';
+    } elseif (($slot = iptools_probe_acquire($maxConcurrent)) === false) {
+        $error = 'The server is busy. Please try again in a minute.';
     } else {
-        $target = iptools_validate_host((string)($_POST['domain'] ?? ''));
-        if ($target === false) {
-            $error = 'Invalid domain or IP address. Please enter a valid input.';
-        } elseif (($probe = iptools_resolve_target($target, $allowPrivateTargets)) === false) {
-            $error = 'Target does not resolve, or resolves to a private/reserved address. Probe refused.';
-        } else {
-            $escapedTarget = escapeshellarg($probe);
-            $hops          = (int)$maxHops;
-            $isWindows     = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
-
-            if ($isWindows) {
-                $cmd = "tracert -h $hops -w 2000 $escapedTarget";
+        try {
+            $target = iptools_validate_host(iptools_post_string('domain'));
+            if ($target === false) {
+                $error = 'Invalid domain or IP address. Please enter a valid input.';
+            } elseif (($probe = iptools_resolve_target($target, $allowPrivateTargets)) === false) {
+                $error = 'Target does not resolve, or resolves to a private/reserved address. Probe refused.';
             } else {
-                $cmd = iptools_timeout_prefix($commandTimeout) . "traceroute -m $hops -w 2 $escapedTarget";
-            }
+                $escapedTarget = escapeshellarg($probe);
+                $hops          = (int)$maxHops;
+                $isWindows     = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
 
-            $output = shell_exec($cmd . ' 2>&1');
-            if ($output) {
-                if ($enableLogging) {
-                    iptools_log('traceroute', $target);
+                if ($isWindows) {
+                    $cmd = "tracert -h $hops -w 2000 $escapedTarget";
+                } else {
+                    $cmd = iptools_timeout_prefix($commandTimeout) . "traceroute -m $hops -w 2 $escapedTarget";
                 }
-            } else {
-                $error = 'Traceroute command returned no output.';
+
+                $output = shell_exec($cmd . ' 2>&1');
+                if ($output) {
+                    if ($enableLogging) {
+                        iptools_log('traceroute', $target);
+                    }
+                } else {
+                    $error = 'Traceroute command returned no output.';
+                }
             }
+        } finally {
+            iptools_probe_release($slot);
         }
     }
 }
