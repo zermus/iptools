@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Tests
+
+- `php tests/run.php` now passes on a fresh checkout. It creates `tmp/` and
+  `logs/` for the run when they are missing and removes them afterwards. Before
+  this, it only passed in a working copy where an earlier run had left them
+  behind.
+
 ### Planned
 
 - Optional `iptools_config.php` for per-tool settings, never overwritten by

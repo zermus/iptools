@@ -34,6 +34,26 @@ function remove_dir(string $dir): void {
     rmdir($dir);
 }
 
+// The HTTP test server below runs with mkdir() disabled and its own sys_temp_dir. So the suite's runtime
+// directories must exist before it starts: logs/ for query logging, and tmp/ so this process and the server
+// share one state directory (probe slots, rate limits). A fresh checkout has neither. Create them for this
+// run if missing, and remove them again afterwards.
+$createdRuntimeDirs = [];
+foreach (['tmp', 'logs'] as $name) {
+    $dir = dirname(__DIR__) . '/' . $name;
+    if (!is_dir($dir)) {
+        mkdir($dir, 0700);
+        $createdRuntimeDirs[] = $dir;
+    }
+}
+register_shutdown_function(function () use ($createdRuntimeDirs) {
+    foreach ($createdRuntimeDirs as $dir) {
+        if (is_dir($dir)) {
+            remove_dir($dir);
+        }
+    }
+});
+
 $buildScript = file_get_contents(dirname(__DIR__) . '/build-release.sh');
 $hasBuildVersion = preg_match('/^VERSION="([0-9]+\.[0-9]+\.[0-9]+)"\r?$/m', $buildScript, $buildVersion) === 1;
 check($hasBuildVersion, 'release builder declares a version');
