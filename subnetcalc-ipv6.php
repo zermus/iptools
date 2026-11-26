@@ -22,7 +22,7 @@ function sanitizeAndValidateIPv6CIDR($input) {
     if ($sanitizedInput === '') {
         return false;
     }
-    if (preg_match('/^([a-fA-F0-9:]+)\/(\d{1,3})$/', $sanitizedInput, $matches)) {
+    if (preg_match('/^([a-fA-F0-9:.]+)\/(\d{1,3})$/', $sanitizedInput, $matches)) {
         $ip     = $matches[1];
         $subnet = (int)$matches[2];
         if ($subnet <= 128 && filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
@@ -30,6 +30,10 @@ function sanitizeAndValidateIPv6CIDR($input) {
         }
     }
     return false;
+}
+
+function fmt_big(string $digits): string {
+    return strrev(implode(',', str_split(strrev($digits), 3)));
 }
 
 /**
@@ -98,7 +102,7 @@ function calculateSubnetInfo($cidr, $display_full) {
     ];
 }
 
-$error             = null;
+$error             = extension_loaded('gmp') ? null : 'IPv6 calculations require the PHP GMP extension. Please contact the server administrator.';
 $result            = null;
 $query             = null;
 $calculate_subnets = false;
@@ -106,6 +110,8 @@ $calculate_subnets = false;
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!iptools_csrf_ok()) {
         $error = 'Invalid or expired form token. Please resubmit.';
+    } elseif (!extension_loaded('gmp')) {
+        $error = 'IPv6 calculations require the PHP GMP extension. Please contact the server administrator.';
     } elseif (iptools_rate_limited('subnetcalc-ipv6', $maxRequests, $timeFrame)) {
         $error = 'Rate limit exceeded. Please try again later.';
     } else {
@@ -132,7 +138,7 @@ iptools_page_open('subnetcalc6', $nonce, 'subnetcalc-ipv6.php');
     <form method="post">
         <input type="hidden" name="csrf" value="<?php echo iptools_e($csrf); ?>">
         <label for="cidr">IPv6 CIDR notation</label>
-        <input type="text" id="cidr" name="cidr" placeholder="e.g., 2606:4700::/32" maxlength="43" required>
+        <input type="text" id="cidr" name="cidr" placeholder="e.g., 2606:4700::/32" maxlength="49" required>
 
         <label><input type="checkbox" name="display_full" value="1"> display addresses in full notation</label>
         <label><input type="checkbox" name="calculate_subnets" value="1"> calculate subnets within the usable range</label>
@@ -153,18 +159,14 @@ if ($error !== null) {
     }
     echo "</ul>";
 
-    if ($calculate_subnets) {
+    if ($calculate_subnets && (int)$result['Subnet Prefix Length'] < 128) {
         $original_subnet = (int)$result['Subnet Prefix Length'];
         echo "<h4>Subnets within the usable range</h4>";
         echo "<table>";
         echo "<tr><th>Subnet Size</th><th>Number of Subnets</th></tr>";
         for ($smaller_subnet = $original_subnet + 1; $smaller_subnet <= 128; $smaller_subnet++) {
             $num_subnets = gmp_pow(2, $smaller_subnet - $original_subnet);
-            $formatted   = number_format((float)gmp_strval($num_subnets), 0, '', ',');
-            // number_format loses precision on huge counts; show raw digits instead
-            if ($smaller_subnet - $original_subnet > 50) {
-                $formatted = gmp_strval($num_subnets);
-            }
+            $formatted = fmt_big(gmp_strval($num_subnets));
             echo "<tr><td>/" . (int)$smaller_subnet . "</td><td>" . iptools_e($formatted) . "</td></tr>";
         }
         echo "</table>";

@@ -142,8 +142,11 @@ if (is_resource($process)) {
                     [$body] = $toolRequest($tool, ['csrf' => $token, 'domain' => '8.8.8.8', 'queryType' => 'PTR'], $cookie);
                     check(strpos($body, 'Rate limit exceeded') !== false && strpos($body, '<pre>') === false,
                         $tool . ' sixth burst request runs no command');
-                    check(count(json_decode(file_get_contents($files[0]), true)[hash('sha256', '127.0.0.1')]) === 5,
-                        $tool . ' burst rejection does not consume hourly counter');
+                    $raw = @file_get_contents($files[0]);
+                    $state = $raw === false ? null : json_decode($raw, true);
+                    $entries = is_array($state) ? ($state[hash('sha256', '127.0.0.1')] ?? null) : null;
+                    check(is_array($entries) && count($entries) === 5,
+                        $tool . ' burst rejection does not consume hourly counter (valid JSON required)');
                 } finally {
                     foreach ($saved as $file => $contents) {
                         if ($contents === null) { if (is_file($file)) { unlink($file); } }
@@ -179,9 +182,35 @@ if (is_resource($process)) {
         iptools_probe_release($slot);
         [$page, $cookie] = $toolRequest('subnetcalc');
         preg_match('/name="csrf" value="([a-f0-9]+)"/', $page, $match);
-        foreach (['192.0.2.0/31' => '192.0.2.0 - 192.0.2.1', '192.0.2.1/32' => 'N/A'] as $cidr => $expected) {
+        foreach (['1.2.3.4/0' => '0.0.0.1 - 255.255.255.254', '10.1.2.3/08' => '10.0.0.1 - 10.255.255.254', '1.2.3.4 0.0.0.0' => '0.0.0.1 - 255.255.255.254', '192.0.2.0/31' => '192.0.2.0 - 192.0.2.1', '192.0.2.1/32' => 'N/A'] as $cidr => $expected) {
             [$body] = $toolRequest('subnetcalc', ['csrf' => $match[1], 'cidr' => $cidr], $cookie);
             check(strpos($body, $expected) !== false, 'rendered usable range for ' . $cidr);
+        }
+        if (!extension_loaded('gmp')) {
+            [$body] = $toolRequest('subnets');
+            check(strpos($body, 'GMP extension') !== false && strpos($body, '</html>') !== false,
+                'cheat sheet reports missing GMP without a partial fatal response');
+            [$page, $cookie] = $toolRequest('subnetcalc-ipv6');
+            preg_match('/name="csrf" value="([a-f0-9]+)"/', $page, $match);
+            [$body] = $toolRequest('subnetcalc-ipv6', ['csrf' => $match[1], 'cidr' => '2606:4700::/64'], $cookie);
+            check(strpos($body, 'GMP extension') !== false && strpos($body, '</html>') !== false,
+                'IPv6 calculator reports missing GMP cleanly');
+        }
+        [$page, $cookie] = $toolRequest('ula_generator');
+        preg_match('/name="csrf" value="([a-f0-9]+)"/', $page, $match);
+        for ($size = 48; $size <= 64; $size++) {
+            [$body] = $toolRequest('ula_generator', ['csrf' => $match[1], 'subnet_size' => (string)$size], $cookie);
+            preg_match_all("/class='readonly-field copy-on-click' value='([^']+)'/", $body, $values);
+            $addresses = $values[1];
+            $first = isset($addresses[1]) ? inet_pton(explode('/', $addresses[1])[0]) : false;
+            $last = isset($addresses[2]) ? inet_pton(explode('/', $addresses[2])[0]) : false;
+            $mask = (1 << (64 - $size)) - 1;
+            check($first !== false && $last !== false
+                && substr($first, 0, 6) === substr($last, 0, 6)
+                && substr($first, 6) === str_repeat("\0", 10)
+                && substr($last, 6, 2) === pack('n', $mask)
+                && substr($last, 8) === str_repeat("\0", 8),
+                'ULA /' . $size . ' has exact first/last /64 without GMP');
         }
         if (extension_loaded('gmp')) {
             [$page, $cookie] = $toolRequest('ula_generator');
@@ -199,6 +228,16 @@ if (is_resource($process)) {
             [$body] = $toolRequest('subnetcalc-ipv6', ['csrf' => $match[1], 'cidr' => '2606:4700::/64'], $cookie);
             check(strpos($body, '2606:4700::') !== false && strpos($body, 'Subnet Prefix Length') !== false,
                 'GMP IPv6 calculator renders valid result');
+            foreach (['::ffff:192.0.2.1/96', 'ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255/128', '::/0'] as $cidr) {
+                [$body] = $toolRequest('subnetcalc-ipv6', ['csrf' => $match[1], 'cidr' => $cidr,
+                    'calculate_subnets' => '1'], $cookie);
+                check(strpos($body, 'Received Input') !== false, 'GMP calculation accepts ' . $cidr);
+                check(substr($cidr, -4) === '/128' ? strpos($body, '<table>') === false
+                    : strpos($body, '<table>') !== false, 'derived table respects host route: ' . $cidr);
+                if ($cidr === '::/0') check(strpos($body,
+                    '340,282,366,920,938,463,463,374,607,431,768,211,456') !== false,
+                    'GMP derived counts retain exact grouped 128-bit precision');
+            }
         }
         $errors = stream_get_contents($pipes[2]);
         // Disabled side-effect functions make attempted filesystem or process work fail visibly.
@@ -399,6 +438,200 @@ check(!iptools_mtr_launch('true', $dir, '../invalid'), 'invalid launch identity 
 unlink($dir . '/mtr_' . $id . '.active');
 rmdir($dir);
 
+$cheatSheet = file_get_contents(dirname(__DIR__) . '/subnets.php');
+check(preg_match("/96\\s*=>\\s*'Equivalent to the entire IPv4 Internet/", $cheatSheet) === 1,
+    'IPv4 Internet equivalence belongs to IPv6 /96 (2^32 addresses)');
+
+$dir = test_dir();
+$reserved = iptools_mtr_reserve($dir, 1, 30);
+$marker = $dir . '/mtr_' . $reserved['id'] . '.active';
+file_put_contents($marker, 'corrupt');
+check(iptools_mtr_reserve($dir, 1, 30)['status'] === 'busy', 'fresh corrupt marker retains its slot');
+touch($marker, time() - 36);
+clearstatcache();
+check(iptools_mtr_status($dir, $reserved['id'], 30)['status'] === 'complete',
+    'expired corrupt marker completes during polling');
+file_put_contents($marker, '');
+chmod($marker, 0600);
+touch($marker, time() - 36);
+$replacement = iptools_mtr_reserve($dir, 1, 30);
+check($replacement['status'] === 'ok', 'expired corrupt marker cannot permanently leak a slot');
+iptools_mtr_release($dir, $reserved['id'], true);
+if (isset($replacement['id'])) { iptools_mtr_release($dir, $replacement['id'], true); }
+remove_dir($dir);
+
+$standins = dirname(__DIR__) . '/tmp/tools-' . bin2hex(random_bytes(4));
+mkdir($standins, 0700);
+try {
+    foreach (['traceroute', 'traceroute6'] as $binary) {
+        file_put_contents($standins . '/' . $binary, "#!/bin/sh\nprintf '%s\\n' '" . $binary . "' \"$@\"\n");
+        chmod($standins . '/' . $binary, 0700);
+    }
+    foreach ([['8.8.8.8', 'traceroute', false], ['2606:4700::1111', 'traceroute6', false],
+        ['2606:4700::1111', 'traceroute', true]] as $case) {
+        if ($case[2]) unlink($standins . '/traceroute6');
+        $code = 'putenv(' . var_export('PATH=' . $standins, true) . ');'
+            . '$_SERVER["REQUEST_METHOD"] = "POST"; $_SERVER["REMOTE_ADDR"] = "trace-test";'
+            . 'require ' . var_export(dirname(__DIR__) . '/iptools_common.php', true) . ';'
+            . 'iptools_start_session(); $_SESSION["iptools_csrf"] = "valid";'
+            . '$_POST = ["csrf" => "valid", "domain" => ' . var_export($case[0], true) . '];'
+            . '$source = file_get_contents(' . var_export(dirname(__DIR__) . '/traceroute.php', true) . ');'
+            . '$source = preg_replace("/require __DIR__[^;]+;/", "", $source);'
+            . 'eval("?>" . $source);';
+        $body = shell_exec(escapeshellarg(PHP_BINARY) . ' -r ' . escapeshellarg($code));
+        check(strpos($body, '<pre>' . $case[1]) !== false
+            && (strpos($body, '-6') !== false) === $case[2],
+            'traceroute selects literal family and available Unix tool: ' . $case[0] . '/' . $case[1]);
+    }
+} finally {
+    remove_dir($standins);
+}
+
+foreach (['ping', 'traceroute', 'whois', 'nslookup'] as $tool) {
+    foreach (['valid', 'invalid'] as $token) {
+        $code = 'session_name("IPTOOLSSESSID"); session_start(); $_SESSION["iptools_csrf"] = "valid";'
+            . ' $_SERVER["REQUEST_METHOD"] = "POST"; $_POST = ["csrf" => ' . var_export($token, true)
+            . ', "domain" => "invalid input", "queryType" => "A"]; ob_start(); require '
+            . var_export(dirname(__DIR__) . '/' . $tool . '.php', true)
+            . '; ob_end_clean(); echo session_status() === PHP_SESSION_NONE ? "closed" : "locked";';
+        check(shell_exec(escapeshellarg(PHP_BINARY) . ' -r ' . escapeshellarg($code)) === 'closed',
+            $tool . ' releases session after ' . $token . ' CSRF without reopening during rendering');
+    }
+}
+
+$timingDir = dirname(__DIR__) . '/tmp/timing-' . bin2hex(random_bytes(4));
+mkdir($timingDir, 0700);
+try {
+    foreach (['ping', 'traceroute', 'whois', 'nslookup'] as $tool) {
+        $marker = $timingDir . '/started';
+        file_put_contents($timingDir . '/' . $tool, "#!/bin/sh\n/bin/touch " . escapeshellarg($marker)
+            . "\n/bin/sleep 2\nprintf 'local output\\n'\n");
+        chmod($timingDir . '/' . $tool, 0700);
+        $session = 'timing' . bin2hex(random_bytes(8));
+        $setup = 'ini_set("session.save_path", ' . var_export($timingDir, true) . ');'
+            . 'session_name("IPTOOLSSESSID"); session_id(' . var_export($session, true) . ');';
+        $code = $setup . 'session_start(); $_SESSION["iptools_csrf"] = "valid";'
+            . 'putenv(' . var_export('PATH=' . $timingDir, true) . ');'
+            . '$_SERVER["REQUEST_METHOD"] = "POST"; $_SERVER["REMOTE_ADDR"] = "timing-' . $tool . '";'
+            . '$_POST = ["csrf" => "valid", "domain" => "8.8.8.8", "queryType" => "PTR"]; require '
+            . var_export(dirname(__DIR__) . '/' . $tool . '.php', true) . ';';
+        $worker = proc_open('exec ' . escapeshellarg(PHP_BINARY) . ' -r ' . escapeshellarg($code),
+            [['pipe', 'r'], ['pipe', 'w'], ['pipe', 'w']], $workerPipes);
+        $until = microtime(true) + 3;
+        while (!is_file($marker) && microtime(true) < $until) { usleep(10000); clearstatcache(); }
+        $start = microtime(true);
+        $probe = shell_exec(escapeshellarg(PHP_BINARY) . ' -r '
+            . escapeshellarg($setup . 'session_start(); echo "available"; session_write_close();'));
+        check(is_file($marker) && $probe === 'available' && microtime(true) - $start < 1,
+            $tool . ' blocking command does not block a concurrent same-session request');
+        foreach ($workerPipes as $pipe) fclose($pipe);
+        proc_close($worker);
+        if (is_file($marker)) unlink($marker);
+    }
+} finally {
+    remove_dir($timingDir);
+}
+
+$dir = test_dir();
+$old = str_repeat('a', 32);
+$fresh = iptools_mtr_reserve($dir, 1, 30);
+$prefix = $dir . '/mtr_' . $old;
+file_put_contents($prefix . '.done', '');
+touch($prefix . '.done', time() - 4000);
+$activeLog = $dir . '/mtr_' . $fresh['id'] . '.log';
+touch($activeLog, time() - 4000);
+check(iptools_mtr_cleanup($dir, 3600, 30), 'expiry cleanup obtains shared lock');
+check(!file_exists($prefix . '.done'), 'expiry cleanup removes old orphan completion markers');
+check(file_exists($activeLog), 'expiry cleanup preserves output of a live reservation');
+iptools_mtr_release($dir, $fresh['id'], true);
+file_put_contents($prefix . '.log', 'old');
+touch($prefix . '.log', time() - 4000);
+iptools_mtr_cleanup($dir, 3600, 30);
+check(!file_exists($prefix . '.log'), 'expiry cleanup removes expired unreserved output');
+$code = 'define("IPTOOLS_MTR_TEMP_DIR", ' . var_export($dir . '/', true) . '); require '
+    . var_export(dirname(__DIR__) . '/mtr_runtime.php', true) . '; echo iptools_mtr_temp_dir();';
+check(shell_exec(escapeshellarg(PHP_BINARY) . ' -r ' . escapeshellarg($code)) === $dir . '/',
+    'shared MTR directory honors server-side override and normalizes its separator');
+remove_dir($dir);
+
+foreach (['reserve', 'poll', 'cleanup'] as $operation) {
+    $dir = test_dir();
+    $run = iptools_mtr_reserve($dir, 1, 2);
+    $prefix = $dir . '/mtr_' . $run['id'];
+    file_put_contents($prefix . '.active', 'corrupt');
+    $apply = function () use ($operation, $dir, $run) {
+        if ($operation === 'reserve') {
+            return iptools_mtr_reserve($dir, 1, 2);
+        }
+        return $operation === 'poll' ? iptools_mtr_status($dir, $run['id'], 2)
+            : iptools_mtr_cleanup($dir, 3600, 2);
+    };
+    $apply();
+    check(is_file($prefix . '.active'), $operation . ' preserves fresh corrupt deadline grace');
+    touch($prefix . '.active', time() - 8);
+    $result = $apply();
+    clearstatcache();
+    check(!is_file($prefix . '.active'), $operation . ' expires corrupt deadline after grace');
+    touch($prefix . '.log', time() - 4000);
+    file_put_contents($prefix . '.done', '');
+    iptools_mtr_cleanup($dir, 3600, 2);
+    check(is_file($prefix . '.log') && is_file($prefix . '.done'),
+        $operation . ' cleanup preserves newly completed output despite old log mtime');
+    touch($prefix . '.done', time() - 4000);
+    iptools_mtr_cleanup($dir, 3600, 2);
+    check(!is_file($prefix . '.log') && !is_file($prefix . '.done'),
+        $operation . ' cleanup expires old completed output');
+    remove_dir($dir);
+}
+
+$code = 'define("IPTOOLS_MTR_TIMEOUT", 7); require '
+    . var_export(dirname(__DIR__) . '/mtr_runtime.php', true) . '; echo iptools_mtr_timeout();';
+check(shell_exec(escapeshellarg(PHP_BINARY) . ' -r ' . escapeshellarg($code)) === '7',
+    'shared MTR timeout honors server-side override');
+
+$code = '$_SERVER["REQUEST_METHOD"] = "GET"; ob_start(); require '
+    . var_export(dirname(__DIR__) . '/subnetcalc-ipv6.php', true) . '; ob_end_clean();'
+    . '$inputs = ["::ffff:192.0.2.1/96", "ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255/128",'
+    . ' "::ffff:999.0.2.1/96", "::::/64", "::1/129"];'
+    . 'foreach ($inputs as $input) echo sanitizeAndValidateIPv6CIDR($input) === false ? "invalid\n" : "valid\n";'
+    . 'echo fmt_big("340282366920938463463374607431768211456");';
+check(shell_exec(escapeshellarg(PHP_BINARY) . ' -r ' . escapeshellarg($code)) ===
+    "valid\nvalid\ninvalid\ninvalid\ninvalid\n340,282,366,920,938,463,463,374,607,431,768,211,456",
+    'IPv6 semantic validation accepts embedded 49-character CIDR and groups exact large counts');
+
+$source = file_get_contents(dirname(__DIR__) . '/subnetcalc-ipv6.php');
+check(strpos($source, 'maxlength="49"') !== false, 'IPv6 input permits the longest embedded CIDR');
+
+$stage = dirname(__DIR__) . '/tmp/package-test-' . bin2hex(random_bytes(4));
+mkdir($stage, 0700);
+try {
+    $expected = ['index.php', 'iptools_common.php', 'mtr.php', 'mtr_output.php', 'mtr_runtime.php',
+        'nslookup.php', 'ping.php', 'subnetcalc-ipv6.php', 'subnetcalc.php', 'subnets.php',
+        'traceroute.php', 'ula_generator.php', 'whois.php', 'subnets.html', '.htaccess',
+        'README.md', 'CHANGELOG.md', 'LICENSE.txt'];
+    foreach (array_merge($expected, ['build-release.sh']) as $file) {
+        copy(dirname(__DIR__) . '/' . $file, $stage . '/' . $file);
+    }
+    file_put_contents($stage . '/stray.php', '<?php echo "not shipped";');
+    exec('bash ' . escapeshellarg($stage . '/build-release.sh') . ' 2>&1', $buildOutput, $buildExit);
+    check($buildExit === 0, 'isolated local archive build succeeds without publishing');
+    foreach (['zip', 'tar.gz'] as $extension) {
+        $archive = $stage . '/releases/ip-tools-' . $buildVersion[1] . '.' . $extension;
+        $entries = [];
+        exec(($extension === 'zip' ? 'unzip -Z1 ' : 'tar -tzf ') . escapeshellarg($archive), $entries, $exit);
+        $files = array_values(array_filter(array_map('basename', $entries), function ($file) use ($buildVersion) {
+            return $file !== 'ip-tools-' . $buildVersion[1];
+        }));
+        sort($files);
+        $sorted = $expected;
+        sort($sorted);
+        check($exit === 0 && $files === $sorted, $extension . ' contains exactly the allowlisted files, not stray PHP');
+    }
+} finally {
+    if (is_dir($stage . '/releases')) remove_dir($stage . '/releases');
+    remove_dir($stage);
+}
+
 $dir = test_dir();
 $reserved = iptools_mtr_reserve($dir, 1, 1);
 file_put_contents($dir . '/mtr_' . $reserved['id'] . '.active', (string)(time() - 1));
@@ -472,6 +705,17 @@ if (is_resource($process)) {
     check(strpos($seed['headers'][0] ?? '', '200') !== false && $seed['body'] === 'seeded',
         'seed succeeds before session ownership assertions');
     $ownedResponse = $request($url, $sessionCookie);
+    mkdir($tmpDir . '/alternate', 0700);
+    $alternate = iptools_mtr_reserve($tmpDir . '/alternate', 1, 2);
+    file_put_contents($tmpDir . '/alternate/mtr_' . $alternate['id'] . '.log', 'alternate-output');
+    $request('http://127.0.0.1:' . $port . '/seed.php?run=' . $alternate['id'], $sessionCookie);
+    $alternateResponse = $request('http://127.0.0.1:' . $port . '/mtr_output.php?run='
+        . $alternate['id'] . '&scratch=alternate', $sessionCookie);
+    check(strpos($alternateResponse['body'], 'alternate-output') !== false
+        && in_array('X-IPTools-MTR-Status: running', $alternateResponse['headers']),
+        'owned HTTP poll reads alternate shared scratch directory');
+    iptools_mtr_release($tmpDir . '/alternate', $alternate['id'], true);
+    remove_dir($tmpDir . '/alternate');
     $otherResponse = $request($url);
     check(strpos($ownedResponse['body'], '&lt;private&gt;') !== false, 'owning session receives escaped run output');
     check(strpos($otherResponse['body'], 'private') === false, 'another session cannot read run output');
@@ -717,5 +961,5 @@ if ($failures > 0) {
 }
 echo "All {$tests} checks passed.\n";
 if (!extension_loaded('gmp')) {
-    echo "Not verified: GMP-dependent ULA and IPv6 calculator execution (GMP unavailable).\n";
+    echo "Not verified: GMP-enabled cheat sheet and IPv6 calculator execution (GMP unavailable).\n";
 }

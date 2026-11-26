@@ -27,7 +27,7 @@ function pow2(int $exp): string {
 // Notable IPv6 allocations, flagged in the table
 $ipv6Notes = [
     127 => 'Point-to-point link (RFC 6164)',
-    104 => 'Equivalent to the entire IPv4 Internet (an IPv4 /0)',
+    96  => 'Equivalent to the entire IPv4 Internet (an IPv4 /0)',
     64  => 'Standard end-user / LAN segment allocation',
     56  => 'Common residential delegation',
     48  => 'Standard business / site allocation',
@@ -71,6 +71,7 @@ iptools_page_open('cheatsheet', $nonce, 'subnets.php');
         } ?>
     </div>
 
+<?php if (extension_loaded('gmp')) { ?>
     <h3>IPv6 subnets</h3>
     <p class="tagline">
         IPv6 subnetting is a different animal: allocations are driven by route
@@ -95,4 +96,7 @@ iptools_page_open('cheatsheet', $nonce, 'subnets.php');
         } ?>
     </table>
 <?php
+} else {
+    echo '<p class="error-message">IPv6 subnet tables require the PHP GMP extension. Please contact the server administrator.</p>';
+}
 iptools_page_close();

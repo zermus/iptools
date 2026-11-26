@@ -27,7 +27,9 @@ $target = null;
 $probe  = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (!iptools_csrf_ok()) {
+    $csrfValid = iptools_csrf_ok();
+    session_write_close();
+    if (!$csrfValid) {
         $error = 'Invalid or expired form token. Please resubmit.';
     } elseif (iptools_rate_limited('traceroute-burst', $burstRequests, $burstWindow)) {
         $error = 'Rate limit exceeded. Please try again later.';
@@ -50,7 +52,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($isWindows) {
                     $cmd = "tracert -h $hops -w 2000 $escapedTarget";
                 } else {
-                    $cmd = iptools_timeout_prefix($commandTimeout) . "traceroute -m $hops -w 2 $escapedTarget";
+                    $tool = 'traceroute';
+                    $family = '';
+                    if (strpos($probe, ':') !== false) {
+                        if (trim((string)shell_exec('command -v traceroute6 2>/dev/null')) !== '') {
+                            $tool = 'traceroute6';
+                        } else {
+                            $family = ' -6';
+                        }
+                    }
+                    $cmd = iptools_timeout_prefix($commandTimeout) . $tool . $family
+                         . " -m $hops -w 2 $escapedTarget";
                 }
 
                 $output = iptools_capture($cmd . ' 2>&1');

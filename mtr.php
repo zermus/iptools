@@ -9,11 +9,11 @@ require __DIR__ . '/mtr_runtime.php';
 /**
  * Configuration
  */
-$tempDir             = __DIR__ . '/tmp/'; // Directory for temporary MTR output logs
+$tempDir             = iptools_mtr_temp_dir(); // Shared with mtr_output.php; configure in mtr_runtime.php
 $expiryTime          = 3600;              // Remove output logs older than this (seconds)
 $mtrPath             = '/usr/sbin/mtr';   // Full path to the mtr binary
 $mtrUseSudo          = false;             // Most distros let mtr run unprivileged; see README before enabling
-$tracerouteTimeout   = 60;                // Seconds before a run is killed and the browser stops polling
+$tracerouteTimeout   = iptools_mtr_timeout(); // Shared run deadline (seconds)
 $maxConcurrent       = 5;                 // Max mtr runs in flight at once, across all clients
 $mtrColumns          = 2000;              // Wide columns so hostnames aren't truncated
 $enableLogging       = true;              // Log queries to logs/mtr.log
@@ -82,14 +82,7 @@ if (!empty($envErrors) && !$showDiagnostics) {
 }
 
 // ===== Cleanup Old Output Logs =====
-foreach (glob($tempDir . 'mtr_*.log') ?: [] as $file) {
-    if (is_file($file) && (time() - filemtime($file)) > $expiryTime) {
-        $prefix = substr($file, 0, -4);
-        @unlink($file);
-        @unlink($prefix . '.active');
-        @unlink($prefix . '.done');
-    }
-}
+iptools_mtr_cleanup($tempDir, $expiryTime, $tracerouteTimeout);
 
 // ===== Process Form Submission =====
 $error = null;
@@ -155,36 +148,59 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <div id="spinner" class="spinner"></div>
             </div>
             <script nonce="<?php echo $nonce; ?>">
-                var pollingInterval;
+                var pollingTimer, cutoffTimer;
+                var stopped = false, failures = 0;
+                var controller;
 
-                function stopPolling() {
-                    clearInterval(pollingInterval);
+                function stopPolling(message) {
+                    if (stopped) return;
+                    stopped = true;
+                    clearTimeout(pollingTimer);
+                    clearTimeout(cutoffTimer);
+                    if (controller) controller.abort();
                     document.getElementById("spinner").style.display = "none";
+                    if (message) document.getElementById("output").textContent = message;
                 }
 
                 function fetchOutput() {
-                    fetch("mtr_output.php?run=<?php echo rawurlencode($runId); ?>")
+                    if (stopped) return;
+                    controller = new AbortController();
+                    var requestTimer = setTimeout(function () { controller.abort(); }, 10000);
+                    fetch("mtr_output.php?run=<?php echo rawurlencode($runId); ?>", {signal: controller.signal})
                         .then(function (response) {
+                            var status = response.headers.get("X-IPTools-MTR-Status");
+                            if (!response.ok || ["running", "complete"].indexOf(status) === -1) {
+                                throw new Error("MTR status unavailable");
+                            }
                             return response.text().then(function (data) {
-                                return { data: data, status: response.headers.get("X-IPTools-MTR-Status") };
+                                return { data: data, status: status };
                             });
                         })
                         .then(function (result) {
-                            // Server-highlighted fragment (escaped server-side)
+                            if (stopped) return;
+                            failures = 0;
+                            // Only the owned endpoint's recognized, server-escaped fragment is accepted.
                             document.getElementById("output").innerHTML = result.data;
-                            if (result.status !== "running") {
-                                stopPolling();
+                            if (result.status === "complete") stopPolling();
+                        })
+                        .catch(function () {
+                            if (!stopped && ++failures >= 3) {
+                                stopPolling("Unable to fetch MTR output. Please try again.");
                             }
                         })
-                        .catch(function (error) {
-                            console.error("Error fetching output:", error);
+                        .then(function () {
+                            clearTimeout(requestTimer);
+                            if (!stopped) pollingTimer = setTimeout(fetchOutput, 5000);
                         });
                 }
 
                 window.onload = function () {
-                    pollingInterval = setInterval(fetchOutput, 5000);
+                    cutoffTimer = setTimeout(function () {
+                        stopPolling("MTR polling timed out. Please try again.");
+                    }, <?php echo (int)($tracerouteTimeout + 10) * 1000; ?>);
                     fetchOutput();
                 };
+                window.addEventListener("pagehide", function () { stopPolling(); });
             </script>
             <?php
             iptools_page_close();

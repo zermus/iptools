@@ -31,7 +31,7 @@ function sanitizeInput($input) {
         if ($mask > 32 || !filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
             return false;
         }
-        return $sanitizedInput;
+        return $ip . '/' . $mask;
     }
 
     // IP address with subnet mask
@@ -44,8 +44,10 @@ function sanitizeInput($input) {
         }
         // The mask must be contiguous ones followed by zeros
         // (e.g. 255.255.0.255 passes IP validation but is not a valid mask).
-        $inverted = ~ip2long($subnetMask) & 0xFFFFFFFF;
-        if ((($inverted + 1) & $inverted) !== 0) {
+        $bits = implode('', array_map(function ($octet) {
+            return str_pad(decbin((int)$octet), 8, '0', STR_PAD_LEFT);
+        }, explode('.', $subnetMask)));
+        if (!preg_match('/^1*0*$/', $bits)) {
             return false;
         }
         return $sanitizedInput;
@@ -61,27 +63,37 @@ function calculateSubnetInfo($cidr) {
     if (strpos($cidr, '/') !== false) {
         list($ip, $mask) = explode('/', $cidr);
         $maskLength = (int)$mask;
-        // /0 needs special handling: shifting by 32 is undefined behavior
-        $maskLong   = $maskLength === 0 ? 0 : ((~0 << (32 - $maskLength)) & 0xFFFFFFFF);
-        $subnetMask = long2ip($maskLong);
+        $maskOctets = [];
+        for ($i = 0; $i < 4; $i++) {
+            $ones = max(0, min(8, $maskLength - $i * 8));
+            $maskOctets[] = $ones === 0 ? 0 : (0xff << (8 - $ones)) & 0xff;
+        }
+        $subnetMask = implode('.', $maskOctets);
     } else {
         list($ip, $subnetMask) = explode(' ', $cidr);
-        $maskLong   = ip2long($subnetMask) & 0xFFFFFFFF;
-        $inverted   = ~$maskLong & 0xFFFFFFFF;
-        $maskLength = 32 - (int)round(log($inverted + 1, 2));
+        $maskOctets = array_map('intval', explode('.', $subnetMask));
+        $maskLength = 0;
+        foreach ($maskOctets as $octet) {
+            $maskLength += substr_count(decbin($octet), '1');
+        }
     }
 
-    $networkLong   = ip2long($ip) & $maskLong;
-    $broadcastLong = $networkLong | (~$maskLong & 0xFFFFFFFF);
-
-    $networkIP   = long2ip($networkLong);
-    $broadcastIP = long2ip($broadcastLong);
+    $octets = array_map('intval', explode('.', $ip));
+    $network = $broadcast = [];
+    foreach ($octets as $i => $octet) {
+        $network[] = $octet & $maskOctets[$i];
+        $broadcast[] = $network[$i] | (0xff ^ $maskOctets[$i]);
+    }
+    $networkIP = implode('.', $network);
+    $broadcastIP = implode('.', $broadcast);
 
     if ($maskLength >= 31) {
         $usableRange = $maskLength === 31 ? $networkIP . ' - ' . $broadcastIP : 'N/A';
         $usableHosts = $maskLength === 31 ? '2 (point-to-point)' : '1 (host route)';
     } else {
-        $usableRange = long2ip($networkLong + 1) . ' - ' . long2ip($broadcastLong - 1);
+        $network[3]++;
+        $broadcast[3]--;
+        $usableRange = implode('.', $network) . ' - ' . implode('.', $broadcast);
         $usableHosts = number_format(pow(2, 32 - $maskLength) - 2);
     }
 
