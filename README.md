@@ -94,25 +94,41 @@ is one of the things 0.1.0 fixed (logging now goes to the protected
 *Planned for 0.2.0:* an optional `iptools_config.php` (never overwritten by
 releases) so upgrades become a straight file replacement.
 
-For 0.1.7, reload open forms and in-flight MTR pages once: the cookie is now
-`IPTOOLSSESSID`, isolated from other PHP applications. A writable suite `tmp/`
-is recommended for shared rate-limit and probe-slot state; if absent or not
-writable these helpers use the system temporary directory. MTR still needs its
-writable `tmp/`. No database migration or new PHP requirement is needed.
+For 0.1.8, back up and reapply local settings, including any shared defaults in
+`mtr_runtime.php`. Keep the `IPTOOLSSESSID` cookie introduced in 0.1.7; no forced
+session reset is added. A writable suite `tmp/` is recommended for shared
+rate-limit and probe-slot state. These helpers use a private system-temporary
+directory only when suite `tmp/` is absent; unsafe or unwritable existing state
+is refused, not bypassed. Follow the ownership and permission migration under
+[MTR notes](#notes) before reusing retained `tmp/` and `logs/` data. MTR still
+requires its configured writable scratch directory. No database migration or
+new PHP requirement is needed.
+
+Migrate local MTR `$tempDir` and `$tracerouteTimeout` overrides to the shared
+`IPTOOLS_MTR_TEMP_DIR` and `IPTOOLS_MTR_TIMEOUT` settings before either endpoint
+loads, or edit their defaults in `mtr_runtime.php` (see MTR notes below).
+MTR now permits three requests per client per 60 seconds (`$burstRequests = 3`,
+`$burstWindow = 60`), in addition to its hourly and concurrent-run limits.
+Reload in-flight MTR pages after upgrading so launch and polling agree.
 
 WHOIS, nslookup, ping and traceroute now share `$maxConcurrent = 8` probe slots
 and each has `$burstRequests = 5` per `$burstWindow = 60` seconds, in addition
 to the hourly limit. Keep the shared cap equal across all four tools and reapply
 local settings after extracting. Review the updated sudoers guidance below.
 
-Behind a TLS-terminating proxy, set `SetEnv HTTPS on` in the Apache backend
-vhost or have the proxy send `X-Forwarded-Proto: https` to mark cookies Secure.
-This header affects cookie security only; client limits still use `REMOTE_ADDR`.
+Behind a TLS-terminating proxy, configure backend HTTPS (for example,
+`SetEnv HTTPS on` in the Apache backend vhost), or explicitly define
+`IPTOOLS_TRUST_PROXY` as `true` in a server-side bootstrap before the tools load.
+Enable proxy trust only behind a trusted proxy that overwrites inbound forwarding
+headers and sends `X-Forwarded-Proto: https`; the first protocol token is used.
+Without opt-in, forwarded protocol headers are ignored. This affects cookie
+security only; client limits still use `REMOTE_ADDR`.
 
 ## Requirements
 
-- PHP 7.3+ with the GMP extension (used by the IPv6 tools); PHP 8.2+
-  recommended (its `FILTER_FLAG_GLOBAL_RANGE` strengthens the SSRF guard)
+- PHP 7.3+; PHP 8.2+ recommended (its `FILTER_FLAG_GLOBAL_RANGE` strengthens
+  the SSRF guard). GMP is required for IPv6 subnet calculations and IPv6
+  cheat-sheet tables, but not for ULA generation or IPv4 tools
 - Optional: the intl extension, to accept internationalized domain names
 - coreutils `timeout` (present on virtually every Linux system), used to
   kill hung lookups

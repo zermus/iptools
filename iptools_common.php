@@ -915,5 +915,5 @@ footer {
  * Close the themed page.
  */
 function iptools_page_close(): void {
-    echo "</div>\n<footer>iptools v0.1.7 — MIT licensed — [ all systems nominal ]</footer>\n</body>\n</html>\n";
+    echo "</div>\n<footer>iptools v0.1.8 — MIT licensed — [ all systems nominal ]</footer>\n</body>\n</html>\n";
 }

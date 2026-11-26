@@ -4,6 +4,36 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Planned
+
+- Optional `iptools_config.php` for per-tool settings, never overwritten by
+  releases, so upgrades become a straight file replacement (config currently
+  lives at the top of each tool file and must be re-applied after upgrading).
+
+## 0.1.8 - 2026-11-26
+
+### Security
+
+- Refuse unsafe existing runtime directories and state files instead of falling
+  back or changing their permissions. Forwarded HTTPS headers now require
+  explicit trusted-proxy opt-in; direct backend HTTPS still works.
+- Tighten diagnostic target validation and MTR admission, with three requests
+  per minute per client alongside its hourly and concurrent-run limits.
+- Bound captured diagnostic and MTR polling output to 512 KiB; use consistent
+  UTF-8-safe output escaping across the tools.
+
+### Fixed
+
+- Slow diagnostics release the session lock so other tabs remain usable.
+- MTR launch and polling share scratch storage and deadlines; polling recovers
+  from transient failures without overlapping requests and stops at completion
+  or its deadline. Expired or failed runs release their reservations safely.
+- Fix IPv4 mask and edge-prefix calculations, IPv6 traceroute command selection,
+  embedded-IPv4 IPv6 input and exact large subnet counts. Missing GMP now shows
+  a useful message; ULA generation works without GMP.
+- Include the shared MTR runtime helper in release archives and align the
+  footer, website and GitHub asset download link with release 0.1.8.
+
 ### Tests
 
 - `php tests/run.php` now passes on a fresh checkout. It creates `tmp/` and
@@ -11,11 +41,23 @@ All notable changes to this project will be documented in this file.
   this, it only passed in a working copy where an earlier run had left them
   behind.
 
-### Planned
+- Expand runtime ownership, permissions, proxy-cookie, diagnostic, calculator
+  and MTR lifecycle regressions, plus deterministic JavaScript polling scenarios.
 
-- Optional `iptools_config.php` for per-tool settings, never overwritten by
-  releases, so upgrades become a straight file replacement (config currently
-  lives at the top of each tool file and must be re-applied after upgrading).
+### Upgrading
+
+- Back up and reapply per-tool settings. Follow README's ownership and permission
+  migration for retained runtime state and logs; fallback is only for absent
+  suite tmp/, not unsafe or unwritable existing storage.
+- Use backend HTTPS or explicitly enable IPTOOLS_TRUST_PROXY only behind a
+  trusted proxy that overwrites inbound forwarding headers.
+- Move local MTR scratch-directory and timeout overrides to IPTOOLS_MTR_TEMP_DIR
+  and IPTOOLS_MTR_TIMEOUT before both endpoints load, or edit their shared
+  defaults in mtr_runtime.php. Reload in-flight MTR pages after upgrading and
+  account for the new three-per-minute burst limit.
+- No database migration or new PHP requirement. The IPTOOLSSESSID cookie name
+  is unchanged from 0.1.7; this release does not force a new sign-in or session
+  reset. Reload open forms if their existing CSRF token has expired.
 
 ## [0.1.7] - 11-18-2026
 
