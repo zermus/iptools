@@ -33,14 +33,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['subnet_size'])) {
 
         // Last /64 subnet: set all subnet bits (bits between the prefix and /64)
         $prefix_bin  = inet_pton($ula_prefix_formatted);
-        $prefix_int  = gmp_import($prefix_bin, 1, GMP_MSW_FIRST | GMP_BIG_ENDIAN);
         $subnet_bits = 64 - $subnet_size;
-
-        $subnet_mask_shifted = gmp_mul(gmp_sub(gmp_pow(2, $subnet_bits), 1), gmp_pow(2, 64));
-        $last_subnet_int     = gmp_add($prefix_int, $subnet_mask_shifted);
-
-        $last_subnet_hex = str_pad(gmp_strval($last_subnet_int, 16), 32, '0', STR_PAD_LEFT);
-        $last_subnet     = inet_ntop(pack('H*', $last_subnet_hex)) . '/64';
+        $subnet_mask = (1 << $subnet_bits) - 1;
+        $prefix_bin[6] = chr($subnet_mask >> 8);
+        $prefix_bin[7] = chr($subnet_mask & 0xff);
+        $last_subnet = inet_ntop($prefix_bin) . '/64';
 
         $results = [
             'prefix'      => $ula_prefix_formatted . '/' . $subnet_size,

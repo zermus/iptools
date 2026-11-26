@@ -241,8 +241,15 @@ browser through Ajax polling (every 5 seconds).
 
 - On SELinux (RHEL) or AppArmor (Ubuntu) systems you may need policy
   adjustments if you hit permission issues.
-- Config knobs (temp directory, expiry, MTR path, poll timeout) live at the
-  top of `mtr.php`.
+- Set shared MTR scratch storage and run timeout in trusted server-side PHP
+  configuration before either endpoint loads: `IPTOOLS_MTR_TEMP_DIR` (default
+  `__DIR__ . '/tmp'`) and `IPTOOLS_MTR_TIMEOUT` (default 60 seconds, minimum 1).
+  Both launch and polling use these settings from `mtr_runtime.php`. Alternatively,
+  edit the defaults in that helper. Migrate any local `$tempDir` or
+  `$tracerouteTimeout` override from `mtr.php` to these shared settings; reload
+  in-flight pages after migration. Protect alternate scratch directories with the
+  same ownership, permissions and web-access restrictions as `tmp/`.
+- Other config knobs (output expiry, MTR path) live at the top of `mtr.php`.
 - `env TERM=xterm` forces non-interactive report mode and avoids terminal
   errors.
 

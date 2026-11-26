@@ -5,6 +5,11 @@ if (PHP_SAPI !== 'cli-server' || preg_match('~(?:^|/)poller_router\.php(?:/|$)~'
     exit;
 }
 
+if (isset($_GET['scratch']) && $_GET['scratch'] === 'alternate') {
+    define('IPTOOLS_MTR_TEMP_DIR', dirname(__DIR__) . '/tmp/alternate');
+    define('IPTOOLS_MTR_TIMEOUT', 2);
+}
+
 define('IPTOOLS_TRUST_PROXY', ($_GET['trust'] ?? 'yes') === 'yes');
 
 $_SERVER['HTTPS'] = ($_GET['https'] ?? 'on') === 'off' ? 'off' : 'on';

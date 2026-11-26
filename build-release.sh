@@ -22,7 +22,9 @@ mkdir -p "$DEST"
 
 # What ships in a release: the tools, the shared layer, the deploy shim,
 # and the docs. Not the website, build script, git metadata, or runtime dirs.
-cp -- *.php "$DEST/"
+cp -- index.php iptools_common.php mtr.php mtr_output.php mtr_runtime.php \
+    nslookup.php ping.php subnetcalc-ipv6.php subnetcalc.php subnets.php \
+    traceroute.php ula_generator.php whois.php "$DEST/"
 cp -- subnets.html "$DEST/"
 cp -- .htaccess README.md CHANGELOG.md LICENSE.txt "$DEST/"
 

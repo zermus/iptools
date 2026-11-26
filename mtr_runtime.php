@@ -4,6 +4,62 @@
  * MIT License (c) 2024 Cody Gee — full text in LICENSE.txt
  */
 
+function iptools_mtr_temp_dir(): string {
+    return rtrim(defined('IPTOOLS_MTR_TEMP_DIR') ? IPTOOLS_MTR_TEMP_DIR : __DIR__ . '/tmp', '/\\')
+        . DIRECTORY_SEPARATOR;
+}
+
+function iptools_mtr_timeout(): int {
+    return defined('IPTOOLS_MTR_TIMEOUT') ? max(1, (int)IPTOOLS_MTR_TIMEOUT) : 60;
+}
+
+function iptools_mtr_expired(string $marker, $deadline, int $timeout, int $now): bool {
+    if ($deadline !== false) {
+        return $deadline <= $now;
+    }
+    clearstatcache(true, $marker);
+    $modified = @filemtime($marker);
+    return $modified !== false && $modified + $timeout + 5 <= $now;
+}
+
+function iptools_mtr_cleanup(string $tempDir, int $expiryTime, ?int $timeout = null): bool {
+    $timeout = $timeout ?? iptools_mtr_timeout();
+    $tempDir = rtrim($tempDir, '/\\') . DIRECTORY_SEPARATOR;
+    return iptools_mtr_with_lock($tempDir, function () use ($tempDir, $expiryTime, $timeout) {
+        $now = time();
+        foreach (glob($tempDir . 'mtr_*.active') ?: [] as $file) {
+            $done = substr($file, 0, -7) . '.done';
+            if (is_file($done) || iptools_mtr_expired($file, iptools_mtr_deadline($file), $timeout, $now)) {
+                @unlink($file);
+            }
+        }
+        $cutoff = time() - $expiryTime;
+        foreach (glob($tempDir . 'mtr_*.log') ?: [] as $file) {
+            $prefix = substr($file, 0, -4);
+            if (is_file($prefix . '.active')) {
+                continue;
+            }
+            clearstatcache(true, $file);
+            $modified = @filemtime($file);
+            $completed = @filemtime($prefix . '.done');
+            if ($modified !== false && $modified < $cutoff
+                && ($completed === false || $completed < $cutoff)) {
+                @unlink($file);
+                @unlink($prefix . '.done');
+            }
+        }
+        foreach (glob($tempDir . 'mtr_*.done') ?: [] as $file) {
+            $prefix = substr($file, 0, -5);
+            $modified = @filemtime($file);
+            if (!is_file($prefix . '.log') && !is_file($prefix . '.active')
+                && $modified !== false && $modified < $cutoff) {
+                @unlink($file);
+            }
+        }
+        return true;
+    }) === true;
+}
+
 function iptools_mtr_with_lock(string $tempDir, callable $callback) {
     $lock = iptools_state_open(rtrim($tempDir, '/\\') . '/.mtr.lock', 'MTR admission refused');
     if ($lock === false || !@flock($lock, LOCK_EX)) {
@@ -61,6 +117,10 @@ function iptools_mtr_claim(string $tempDir, string $id, int $deadline): bool {
 }
 
 function iptools_mtr_deadline(string $marker) {
+    clearstatcache(true, $marker);
+    if (!is_file($marker)) {
+        return false;
+    }
     $fh = iptools_state_open($marker, 'MTR marker read refused');
     if ($fh === false) {
         return false;
@@ -81,9 +141,8 @@ function iptools_mtr_reserve(string $tempDir, int $maxConcurrent, int $timeout):
         foreach (glob($tempDir . 'mtr_*.active') ?: [] as $file) {
             $done = substr($file, 0, -7) . '.done';
             $deadline = iptools_mtr_deadline($file);
-            if (is_file($done) || ($deadline !== false && $deadline <= $now)) {
+            if (is_file($done) || iptools_mtr_expired($file, $deadline, $timeout, $now)) {
                 @unlink($file);
-                @unlink($done);
             } elseif (is_file($file)) {
                 $active[] = $file;
             }
@@ -153,24 +212,21 @@ function iptools_mtr_launch(string $command, string $tempDir, string $id): bool 
     return true;
 }
 
-function iptools_mtr_status(string $tempDir, string $id): array {
+function iptools_mtr_status(string $tempDir, string $id, ?int $timeout = null): array {
+    $timeout = $timeout ?? iptools_mtr_timeout();
     if (!preg_match('/^[0-9a-f]{32}$/', $id)) {
         return ['status' => 'missing', 'output' => ''];
     }
 
     $tempDir = rtrim($tempDir, '/\\') . DIRECTORY_SEPARATOR;
-    $result = iptools_mtr_with_lock($tempDir, function () use ($tempDir, $id) {
+    $result = iptools_mtr_with_lock($tempDir, function () use ($tempDir, $id, $timeout) {
         $prefix = $tempDir . 'mtr_' . $id;
         $marker = $prefix . '.active';
         $done = $prefix . '.done';
         if (is_file($marker)) {
             $deadline = iptools_mtr_deadline($marker);
-            if ($deadline === false) {
-                return ['status' => 'error', 'output' => ''];
-            }
-            if (is_file($done) || $deadline <= time()) {
+            if (is_file($done) || iptools_mtr_expired($marker, $deadline, $timeout, time())) {
                 @unlink($marker);
-                @unlink($done);
             }
         }
         if (!is_file($prefix . '.log')) {

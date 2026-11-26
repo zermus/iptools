@@ -24,7 +24,9 @@ $output = null;
 $target = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (!iptools_csrf_ok()) {
+    $csrfValid = iptools_csrf_ok();
+    session_write_close();
+    if (!$csrfValid) {
         $error = 'Invalid or expired form token. Please resubmit.';
     } elseif (iptools_rate_limited('whois-burst', $burstRequests, $burstWindow)) {
         $error = 'Rate limit exceeded. Please try again later.';

@@ -28,7 +28,7 @@ if (!$owned) {
     http_response_code(404);
 }
 $result = $owned
-    ? iptools_mtr_status(__DIR__ . '/tmp/', $id)
+    ? iptools_mtr_status(iptools_mtr_temp_dir(), $id, iptools_mtr_timeout())
     : ['status' => 'missing', 'output' => ''];
 header('X-IPTools-MTR-Status: ' . $result['status']);
 
