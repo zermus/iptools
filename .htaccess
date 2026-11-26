@@ -8,17 +8,17 @@
 DirectoryIndex index.php
 
 # The shared include is required by every tool; it is never a page itself.
-<Files "iptools_common.php">
+<FilesMatch "^(iptools_common|mtr_runtime)\.php$|^build-release\.sh$">
     Require all denied
-</Files>
+</FilesMatch>
 
 # Query logs, MTR scratch output, and tests must not be served.
 # (The tools also drop a deny-all .htaccess into logs/ and tmp/ at runtime;
 #  this is belt-and-suspenders.) The optional prefix group matches both a
 # web-root install (/logs/) and a subdirectory install (/iptools/logs/).
-RedirectMatch 403 (?i)^(/.*)?/(logs|tmp|tests)(/|$)
+RedirectMatch 403 (?i)^(/.*)?/(logs|tmp|tests|\.git)(/|$)
 
 <IfModule mod_rewrite.c>
     RewriteEngine On
-    RewriteRule ^(logs|tmp|tests)(/|$) - [F,L]
+    RewriteRule ^(logs|tmp|tests|\.git)(/|$) - [F,L]
 </IfModule>

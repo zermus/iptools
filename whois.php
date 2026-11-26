@@ -39,7 +39,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $error = 'Invalid domain name or IP address. Please enter a valid input.';
             } else {
                 $escapedTarget = escapeshellarg($target);
-                $output = shell_exec(iptools_timeout_prefix($commandTimeout) . "whois $escapedTarget 2>&1");
+                $output = iptools_capture(iptools_timeout_prefix($commandTimeout) . "whois $escapedTarget 2>&1");
 
                 if ($output) {
                     if ($enableLogging) {
@@ -59,7 +59,7 @@ iptools_page_open('whois', $nonce, 'whois.php');
 ?>
     <p class="tagline">registry recon — domains and IP allocations</p>
     <form method="post" action="">
-        <input type="hidden" name="csrf" value="<?php echo htmlspecialchars($csrf); ?>">
+        <input type="hidden" name="csrf" value="<?php echo iptools_e($csrf); ?>">
         <label for="domain">domain / ip address</label>
         <input type="text" name="domain" id="domain" required maxlength="253" placeholder="e.g., example.com or 8.8.8.8">
         <div class="submit-container">
@@ -68,10 +68,10 @@ iptools_page_open('whois', $nonce, 'whois.php');
     </form>
 <?php
 if ($error !== null) {
-    echo "<p class='error-message'>" . htmlspecialchars($error) . "</p>";
+    echo "<p class='error-message'>" . iptools_e($error) . "</p>";
 } elseif ($output !== null) {
     echo "<div class='output-item'>";
-    echo "<span class='out-label'>whois " . htmlspecialchars($target) . "</span>";
+    echo "<span class='out-label'>whois " . iptools_e($target) . "</span>";
     echo "<pre>" . iptools_highlight($output, 'whois') . "</pre>";
     echo "</div>";
 }

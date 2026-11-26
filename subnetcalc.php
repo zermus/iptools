@@ -121,7 +121,7 @@ iptools_page_open('subnetcalc', $nonce, 'subnetcalc.php');
 ?>
     <p class="tagline">IPv4 subnet math — CIDR or dotted mask</p>
     <form method="post">
-        <input type="hidden" name="csrf" value="<?php echo htmlspecialchars($csrf); ?>">
+        <input type="hidden" name="csrf" value="<?php echo iptools_e($csrf); ?>">
         <label for="cidr">IPv4 CIDR or address + mask</label>
         <input type="text" id="cidr" name="cidr" placeholder="e.g., 192.168.1.0/24 or 192.168.1.0 255.255.255.0" required maxlength="253">
         <div class="submit-container">
@@ -130,13 +130,13 @@ iptools_page_open('subnetcalc', $nonce, 'subnetcalc.php');
     </form>
 <?php
 if ($error !== null) {
-    echo "<p class='error-message'>" . htmlspecialchars($error) . "</p>";
+    echo "<p class='error-message'>" . iptools_e($error) . "</p>";
 } elseif ($result !== null) {
     echo "<div class='output-item'>";
-    echo "<span class='out-label'>subnetcalc " . htmlspecialchars($query) . "</span>";
+    echo "<span class='out-label'>subnetcalc " . iptools_e($query) . "</span>";
     echo "<ul class='results'>";
     foreach ($result as $key => $value) {
-        echo "<li><strong>" . htmlspecialchars($key) . ":</strong> " . htmlspecialchars($value) . "</li>";
+        echo "<li><strong>" . iptools_e($key) . ":</strong> " . iptools_e($value) . "</li>";
     }
     echo "</ul></div>";
 }

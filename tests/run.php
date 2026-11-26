@@ -221,6 +221,150 @@ foreach ($httpState as $file => $contents) {
     else { file_put_contents($file, $contents); }
 }
 
+$fallbackPreferred = dirname(__DIR__) . '/tmp';
+$fallbackBackup = $fallbackPreferred . '-investigation-backup';
+rename($fallbackPreferred, $fallbackBackup);
+$fallback = null;
+$fallbackCreated = false;
+try {
+    $uid = function_exists('posix_geteuid') ? posix_geteuid() : get_current_user();
+    $expected = sys_get_temp_dir() . '/iptools_'
+        . substr(hash('sha256', dirname(__DIR__) . ':' . $uid), 0, 16);
+    $fallbackCreated = !file_exists($expected);
+    $fallback = iptools_state_dir();
+    check($fallback === $expected && !is_link($fallback)
+        && (fileperms($fallback) & 0777) === 0700, 'missing tmp uses private per-install fallback');
+    check(!function_exists('posix_geteuid') || fileowner($fallback) === posix_geteuid(),
+        'fallback belongs to effective user');
+    if ($fallbackCreated) {
+        rmdir($fallback);
+        symlink($fallbackBackup, $fallback);
+        $refused = false;
+        try { iptools_state_dir(); } catch (RuntimeException $error) { $refused = true; }
+        check($refused, 'fallback symlink fails closed');
+        unlink($fallback);
+    }
+} finally {
+    if ($fallbackCreated && $fallback !== null && is_dir($fallback) && !is_link($fallback)) {
+        rmdir($fallback);
+    }
+    rename($fallbackBackup, $fallbackPreferred);
+}
+
+$logName = 'security-test-' . bin2hex(random_bytes(8));
+$logDir = dirname(__DIR__) . '/logs';
+$guards = [];
+foreach (['.htaccess', 'index.html'] as $name) {
+    $guards[$name] = is_file($logDir . '/' . $name) ? file_get_contents($logDir . '/' . $name) : null;
+    if (is_file($logDir . '/' . $name)) { unlink($logDir . '/' . $name); }
+}
+try {
+    iptools_log($logName, 'test');
+    check(file_get_contents($logDir . '/.htaccess') === "Require all denied\n"
+        && is_file($logDir . '/index.html'), 'preexisting log directory receives access guards');
+    check((fileperms($logDir . '/' . $logName . '.log') & 0777) === 0600, 'query log is private');
+} finally {
+    unlink($logDir . '/' . $logName . '.log');
+    foreach ($guards as $name => $contents) {
+        if ($contents === null) { unlink($logDir . '/' . $name); }
+        else { file_put_contents($logDir . '/' . $name, $contents); }
+    }
+}
+
+$targetDir = test_dir();
+$target = $targetDir . '/target';
+file_put_contents($target, 'untouched');
+chmod($target, 0644);
+$logPath = $logDir . '/' . $logName . '.log';
+symlink($target, $logPath);
+iptools_log($logName, 'must not write');
+check(file_get_contents($target) === 'untouched' && (fileperms($target) & 0777) === 0644,
+    'query log symlink refused without modifying target');
+unlink($logPath);
+remove_dir($targetDir);
+
+$command = escapeshellarg(PHP_BINARY) . ' -r '
+    . escapeshellarg('fwrite(STDOUT, str_repeat("a", 600000)); fwrite(STDERR, "stderr");');
+$output = iptools_capture($command);
+check(strlen($output) === 524288 && substr($output, -strlen("[output truncated]\n")) === "[output truncated]\n",
+    'capture bounds combined stdout/stderr and reports truncation');
+check(strlen(iptools_capture($command, 4)) === 4, 'small capture limit stays bounded');
+check(iptools_capture(escapeshellarg(PHP_BINARY) . ' -r ' . escapeshellarg('fwrite(STDERR, "err");')) === 'err',
+    'capture includes stderr');
+$prefix = iptools_timeout_prefix(1);
+check($prefix === '' || strpos($prefix, ' -k 5 1 ') !== false, 'timeout has kill-after grace');
+check(iptools_e("'\"<>&\xff") === '&#039;&quot;&lt;&gt;&amp;�', 'escaping handles quotes and invalid UTF-8');
+
+if ($prefix !== '' && function_exists('pcntl_signal')) {
+    $start = microtime(true);
+    $output = iptools_capture($prefix . escapeshellarg(PHP_BINARY) . ' -r '
+        . escapeshellarg('pcntl_async_signals(true); pcntl_signal(SIGTERM, SIG_IGN); echo "ready"; while (true) { usleep(100000); }'));
+    $elapsed = microtime(true) - $start;
+    check(strpos($output, 'ready') !== false && $elapsed >= 5 && $elapsed < 9,
+        'timeout escalates TERM-ignoring local process to KILL after five seconds');
+}
+$code = 'require ' . var_export(dirname(__DIR__) . '/iptools_common.php', true)
+    . '; ini_set("session.use_only_cookies", "0"); iptools_start_session(); echo ini_get("session.use_only_cookies");';
+check(iptools_capture(escapeshellarg(PHP_BINARY) . ' -r ' . escapeshellarg($code)) === '1',
+    'session startup enforces cookie-only sessions');
+
+$dir = test_dir();
+$target = $dir . '/target';
+file_put_contents($target, 'unchanged');
+chmod($target, 0644);
+symlink($target, $dir . '/link');
+check(iptools_state_open($dir . '/link', 'test') === false, 'state open refuses symlink');
+check(file_get_contents($target) === 'unchanged' && (fileperms($target) & 0777) === 0644,
+    'refused symlink leaves target and permissions unchanged');
+check(iptools_state_open($target, 'test') === false, 'state open rejects insecure existing mode');
+$fh = iptools_state_open($dir . '/private', 'test');
+check(is_resource($fh) && (fstat($fh)['mode'] & 0777) === 0600, 'new state descriptor is private');
+if (is_resource($fh)) { fclose($fh); }
+mkdir($dir . '/directory', 0700);
+check(iptools_state_open($dir . '/directory', 'test') === false, 'state refuses nonregular directory');
+if (function_exists('posix_mkfifo')) {
+    posix_mkfifo($dir . '/fifo', 0600);
+    check(iptools_state_open($dir . '/fifo', 'test') === false, 'state refuses FIFO without blocking');
+}
+mkdir($dir . '/unsafe', 0777);
+chmod($dir . '/unsafe', 0777);
+check(iptools_state_open($dir . '/unsafe/state', 'test') === false
+    && !file_exists($dir . '/unsafe/state'), 'state refuses non-app-controlled parent');
+rmdir($dir . '/unsafe');
+if (function_exists('posix_geteuid') && posix_geteuid() !== 0) {
+    check(iptools_state_open('/etc/hosts', 'test') === false, 'foreign-owned parent and file refused');
+}
+$mask = umask(0000);
+$fh = iptools_state_open($dir . '/umask', 'test');
+check(is_resource($fh) && (fstat($fh)['mode'] & 0777) === 0600 && umask() === 0000,
+    'private state creation restores permissive umask');
+if (is_resource($fh)) { fclose($fh); }
+umask($mask);
+chmod($target, 0600);
+$fh = iptools_state_open($target, 'test');
+check(is_resource($fh), 'owned state works after safe permission migration');
+if (is_resource($fh)) { fclose($fh); }
+remove_dir($dir);
+
+$dir = test_dir();
+$id = str_repeat('d', 32);
+$mask = umask(0000);
+try {
+    check(iptools_mtr_claim($dir, $id, time() + 30), 'direct MTR claim succeeds');
+    check(umask() === 0000, 'MTR claim restores permissive umask');
+} finally {
+    umask($mask);
+}
+foreach (['log', 'active'] as $ext) {
+    check((fileperms($dir . '/mtr_' . $id . '.' . $ext) & 0777) === 0600,
+        'MTR scratch ' . $ext . ' is private');
+}
+file_put_contents($dir . '/mtr_' . $id . '.log', str_repeat('x', 600000));
+check(strlen(iptools_mtr_status($dir, $id)['output']) === 524288, 'MTR poll output is capped');
+check((fileperms($dir . '/.mtr.lock') & 0777) === 0600, 'MTR lock is private');
+iptools_mtr_release($dir, $id, true);
+remove_dir($dir);
+
 $dir = test_dir();
 $first = iptools_mtr_reserve($dir, 2, 30); // session A
 $second = iptools_mtr_reserve($dir, 2, 30); // session A, second tab
@@ -269,6 +413,10 @@ check(iptools_mtr_launch("printf 'done'", $dir, $reserved['id']), 'background co
 $deadline = microtime(true) + 3;
 do {
     usleep(20000);
+    $doneFile = $dir . '/mtr_' . $reserved['id'] . '.done';
+    if (is_file($doneFile)) {
+        check((fileperms($doneFile) & 0777) === 0600, 'MTR done marker is private');
+    }
     $status = iptools_mtr_status($dir, $reserved['id']);
 } while ($status['status'] === 'running' && microtime(true) < $deadline);
 check($status['status'] === 'complete' && $status['output'] === 'done', 'completion removes marker and preserves output');
@@ -319,6 +467,7 @@ if (is_resource($process)) {
         mkdir($tmpDir, 0700);
     }
     file_put_contents($tmpDir . '/mtr_' . $runId . '.log', '<private>');
+    chmod($tmpDir . '/mtr_' . $runId . '.log', 0600);
     $seed = $request('http://127.0.0.1:' . $port . '/seed.php?run=' . $runId, $sessionCookie);
     check(strpos($seed['headers'][0] ?? '', '200') !== false && $seed['body'] === 'seeded',
         'seed succeeds before session ownership assertions');
@@ -328,6 +477,80 @@ if (is_resource($process)) {
     check(strpos($otherResponse['body'], 'private') === false, 'another session cannot read run output');
     check(strpos($otherResponse['headers'][0] ?? '', '404') !== false, 'cross-session run request is rejected');
     unlink($tmpDir . '/mtr_' . $runId . '.log');
+
+    $bad = $request('http://127.0.0.1:' . $port . '/mtr_output.php?run%5B%5D=1');
+    check(strpos($bad['headers'][0] ?? '', '404') !== false
+        && strpos($bad['body'], 'Warning') === false, 'array run is warning-free 404');
+    foreach (["Content-Security-Policy: default-src 'none'; frame-ancestors 'none'",
+        'X-Frame-Options: DENY', 'Referrer-Policy: no-referrer'] as $header) {
+        check(in_array($header, $bad['headers']), 'poller sends ' . $header);
+    }
+    $admit = function (array $post = [], string $cookie = '', string $route = 'admission.php') use ($port): array {
+        $context = stream_context_create(['http' => ['ignore_errors' => true,
+            'method' => $post ? 'POST' : 'GET',
+            'header' => "Cookie: {$cookie}\r\nContent-Type: application/x-www-form-urlencoded\r\n",
+            'content' => http_build_query($post)]]);
+        $body = file_get_contents('http://127.0.0.1:' . $port . '/' . $route, false, $context);
+        preg_match('/Set-Cookie:\s*([^;]+)/i', implode("\n", $http_response_header), $match);
+        return [$body, $match[1] ?? $cookie];
+    };
+    [$page, $dnsCookie] = $admit([], '', 'dns.php');
+    preg_match('/name="csrf" value="([a-f0-9]+)"/', $page, $dnsToken);
+    foreach (['1.2.3.4' => '4.3.2.1.in-addr.arpa.', '2001:4860::1' =>
+        implode('.', str_split(strrev(bin2hex(inet_pton('2001:4860::1'))))) . '.ip6.arpa.',
+        'singlelabel' => 'singlelabel'] as $target => $query) {
+        [$body] = $admit(['csrf' => $dnsToken[1], 'domain' => $target,
+            'queryType' => $target === 'singlelabel' ? 'A' : 'PTR'], $dnsCookie, 'dns.php');
+        check(strpos($body, '-nosearch') !== false && strpos($body, $query) !== false,
+            'DNS invocation uses no-search and absolute PTR when applicable: ' . $target);
+    }
+    $saved = [];
+    foreach (['mtr', 'mtr-burst'] as $key) {
+        $file = iptools_state_dir() . '/iptools_ratelimit_' . $key . '.json';
+        $saved[$file] = is_file($file) ? file_get_contents($file) : null;
+        if (is_file($file)) { unlink($file); }
+    }
+    $hourly = iptools_state_dir() . '/iptools_ratelimit_mtr.json';
+    $burst = iptools_state_dir() . '/iptools_ratelimit_mtr-burst.json';
+    $runs = [];
+    try {
+        [$page, $admitCookie] = $admit();
+        preg_match('/name="csrf" value="([a-f0-9]+)"/', $page, $match);
+        $token = $match[1] ?? '';
+        [$body] = $admit(['csrf' => ['bad'], 'domain' => '8.8.8.8'], $admitCookie);
+        check(strpos($body, 'Invalid or expired form token') !== false
+            && !file_exists($hourly) && !file_exists($burst), 'MTR invalid CSRF consumes no counters');
+        mkdir($burst, 0700);
+        [$body] = $admit(['csrf' => $token, 'domain' => '8.8.8.8'], $admitCookie);
+        check(strpos($body, 'admission storage unavailable') !== false && !file_exists($hourly),
+            'MTR unavailable burst state refuses admission before hourly count or launch');
+        rmdir($burst);
+        for ($i = 0; $i < 4; $i++) {
+            [$body] = $admit(['csrf' => $token, 'domain' => '8.8.8.8'], $admitCookie);
+            preg_match('/mtr_output\.php\?run=([a-f0-9]{32})/', $body, $run);
+            if (isset($run[1])) { $runs[] = $run[1]; }
+            check($i < 3 ? isset($run[1]) : strpos($body, 'Rate limit exceeded') !== false,
+                'eligible MTR burst admission ' . ($i + 1));
+        }
+        $state = json_decode(file_get_contents($hourly), true);
+        check(count($state[hash('sha256', '127.0.0.1')] ?? []) === 3 && count($runs) === 3,
+            'fourth MTR request neither counts hourly nor reserves or launches');
+        foreach ($runs as $run) {
+            $deadline = microtime(true) + 3;
+            do {
+                usleep(20000);
+                $result = $request('http://127.0.0.1:' . $port . '/mtr_output.php?run=' . $run, $admitCookie);
+            } while (in_array('X-IPTools-MTR-Status: running', $result['headers']) && microtime(true) < $deadline);
+            check(in_array('X-IPTools-MTR-Status: complete', $result['headers'])
+                && strpos($result['body'], '8.8.8.8') !== false, 'local MTR tool launch and owned completion poll');
+        }
+    } finally {
+        foreach ($runs as $run) { iptools_mtr_release($tmpDir, $run, true); }
+        foreach ($saved as $file => $contents) {
+            if (is_file($file)) { unlink($file); }
+            if ($contents !== null) { file_put_contents($file, $contents); chmod($file, 0600); }
+        }
+    }
 
     $offResponse = $request($url . '&https=off');
     $offCookie = implode("\n", array_filter($offResponse['headers'], function ($header) {
@@ -341,10 +564,18 @@ if (is_resource($process)) {
             'router mode denies direct fixture path ' . $path);
     }
     $context = stream_context_create(['http' => ['ignore_errors' => true,
-        'header' => "X-Forwarded-Proto: hTtPs\r\n"]]);
+        'header' => "X-Forwarded-Proto: hTtPs, http\r\n"]]);
     file_get_contents($url . '&https=off', false, $context);
     check(stripos(implode("\n", $http_response_header), '; secure') !== false,
-        'case-insensitive forwarded HTTPS marks cookie Secure');
+        'trusted comma-separated forwarded HTTPS marks cookie Secure');
+
+    foreach (['&trust=no' => "https", '&trust=yes' => "http, https"] as $options => $proto) {
+        $context = stream_context_create(['http' => ['ignore_errors' => true,
+            'header' => "X-Forwarded-Proto: {$proto}\r\n"]]);
+        file_get_contents($url . '&https=off' . $options, false, $context);
+        check(stripos(implode("\n", $http_response_header), '; secure') === false,
+            'untrusted proxy or non-HTTPS first token cannot mark cookie secure ' . $options);
+    }
 
     proc_terminate($process);
     fclose($pipes[1]);
@@ -354,7 +585,8 @@ if (is_resource($process)) {
     check(false, 'PHP test server starts');
 }
 
-foreach (['::10.0.0.1', '::127.0.0.1', '::ffff:10.0.0.1', '2002:0a00:0001::1',
+foreach (['192.0.2.1', '198.51.100.1', '203.0.113.1', '100::1', '2001:2::1',
+    '2001:10::1', '2001:20::1', 'fec0::1', '3fff::1', '5f00::1', '::ffff:0:127.0.0.1', '::10.0.0.1', '::127.0.0.1', '::ffff:10.0.0.1', '2002:0a00:0001::1',
     '64:ff9b::a00:1'] as $ip) {
     check(!iptools_is_public_ip($ip), 'refuse nonpublic IP ' . $ip);
 }
@@ -375,6 +607,7 @@ try {
     foreach (['{"x":5}', 'not JSON', '5', 'null', '"scalar"',
         '{"x":[1,"2",true],"y":false}'] as $raw) {
         file_put_contents($file, $raw);
+        chmod($file, 0600);
         check(iptools_rate_limited($tool, 1, 60) === false, 'malformed state recovers: ' . $raw);
         check(iptools_rate_limited($tool, 1, 60) === true, 'valid requests count after recovery');
     }
@@ -432,7 +665,12 @@ $mode = fileperms($preferred) & 0777;
 try {
     chmod($preferred, 0500);
     clearstatcache();
-    check(iptools_state_dir() === sys_get_temp_dir(), 'unwritable suite tmp falls back to system tmp');
+    if (!is_writable($preferred)) {
+        $refused = false;
+        try { iptools_state_dir(); } catch (RuntimeException $error) { $refused = true; }
+        check($refused && iptools_probe_acquire(1) === false,
+            'invalid existing storage refuses admission without fallback');
+    }
 } finally {
     chmod($preferred, $mode);
     clearstatcache();

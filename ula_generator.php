@@ -55,7 +55,7 @@ iptools_page_open('ula-gen', $nonce, 'ula_generator.php');
 ?>
     <p class="tagline">RFC 4193 unique local addresses — 40 bits of entropy</p>
     <form method="post">
-        <input type="hidden" name="csrf" value="<?php echo htmlspecialchars($csrf); ?>">
+        <input type="hidden" name="csrf" value="<?php echo iptools_e($csrf); ?>">
         <label for="subnet_size">subnet size</label>
         <select id="subnet_size" name="subnet_size">
             <?php for ($size = 64; $size >= 48; $size--) {
@@ -70,15 +70,15 @@ iptools_page_open('ula-gen', $nonce, 'ula_generator.php');
     </form>
 <?php
 if ($error !== null) {
-    echo "<p class='error-message'>" . htmlspecialchars($error) . "</p>";
+    echo "<p class='error-message'>" . iptools_e($error) . "</p>";
 } elseif ($results !== null) {
     echo "<div class='output-item'>";
     echo "<span class='out-label'>random ULA allocation</span>";
     echo "<ul class='results'>";
-    echo "<li><strong>ULA Prefix:</strong> <input type='text' class='readonly-field copy-on-click' value='" . htmlspecialchars($results['prefix']) . "' readonly></li>";
-    echo "<li><strong>/64 Subnets:</strong> " . htmlspecialchars($results['num_subnets']) . "</li>";
-    echo "<li><strong>First /64:</strong> <input type='text' class='readonly-field copy-on-click' value='" . htmlspecialchars($results['first']) . "' readonly></li>";
-    echo "<li><strong>Last /64:</strong> <input type='text' class='readonly-field copy-on-click' value='" . htmlspecialchars($results['last']) . "' readonly></li>";
+    echo "<li><strong>ULA Prefix:</strong> <input type='text' class='readonly-field copy-on-click' value='" . iptools_e($results['prefix']) . "' readonly></li>";
+    echo "<li><strong>/64 Subnets:</strong> " . iptools_e($results['num_subnets']) . "</li>";
+    echo "<li><strong>First /64:</strong> <input type='text' class='readonly-field copy-on-click' value='" . iptools_e($results['first']) . "' readonly></li>";
+    echo "<li><strong>Last /64:</strong> <input type='text' class='readonly-field copy-on-click' value='" . iptools_e($results['last']) . "' readonly></li>";
     echo "</ul></div>";
     // CSP forbids inline handlers; select-on-click is wired up here instead
     echo "<script nonce=\"{$nonce}\">document.querySelectorAll('.copy-on-click').forEach(function (el) { el.addEventListener('click', function () { this.select(); }); });</script>";

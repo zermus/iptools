@@ -91,7 +91,7 @@ iptools_page_open('cheatsheet', $nonce, 'subnets.php');
             $note  = $ipv6Notes[$p] ?? '';
             $class = $note !== '' ? " class='hilite'" : '';
             echo "<tr{$class}><th>/{$p}</th><td>{$addresses}</td><td>{$of64}</td><td>"
-               . htmlspecialchars($note) . "</td></tr>\n";
+               . iptools_e($note) . "</td></tr>\n";
         } ?>
     </table>
 <?php

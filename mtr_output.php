@@ -12,10 +12,13 @@ iptools_start_session();
 header('Content-Type: text/html; charset=UTF-8');
 header('X-Content-Type-Options: nosniff');
 header('Cache-Control: no-store');
+header("Content-Security-Policy: default-src 'none'; frame-ancestors 'none'");
+header('X-Frame-Options: DENY');
+header('Referrer-Policy: no-referrer');
 
 // A session may own several runs (for example, traces launched in two tabs).
 // The requested random run id must still be present in that session's allowlist.
-$id = (string)($_GET['run'] ?? '');
+$id = isset($_GET['run']) && is_string($_GET['run']) ? $_GET['run'] : '';
 $owned = preg_match('/^[0-9a-f]{32}$/', $id) === 1
     && isset($_SESSION['iptools_mtr_runs'])
     && is_array($_SESSION['iptools_mtr_runs'])

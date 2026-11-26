@@ -130,7 +130,7 @@ iptools_page_open('subnetcalc6', $nonce, 'subnetcalc-ipv6.php');
 ?>
     <p class="tagline">IPv6 subnet math — 128 bits of headroom</p>
     <form method="post">
-        <input type="hidden" name="csrf" value="<?php echo htmlspecialchars($csrf); ?>">
+        <input type="hidden" name="csrf" value="<?php echo iptools_e($csrf); ?>">
         <label for="cidr">IPv6 CIDR notation</label>
         <input type="text" id="cidr" name="cidr" placeholder="e.g., 2606:4700::/32" maxlength="43" required>
 
@@ -143,13 +143,13 @@ iptools_page_open('subnetcalc6', $nonce, 'subnetcalc-ipv6.php');
     </form>
 <?php
 if ($error !== null) {
-    echo "<p class='error-message'>" . htmlspecialchars($error) . "</p>";
+    echo "<p class='error-message'>" . iptools_e($error) . "</p>";
 } elseif ($result !== null) {
     echo "<div class='output-item'>";
-    echo "<span class='out-label'>subnetcalc6 " . htmlspecialchars($query) . "</span>";
+    echo "<span class='out-label'>subnetcalc6 " . iptools_e($query) . "</span>";
     echo "<ul class='results'>";
     foreach ($result as $key => $value) {
-        echo "<li><strong>" . htmlspecialchars($key) . ":</strong> " . htmlspecialchars($value) . "</li>";
+        echo "<li><strong>" . iptools_e($key) . ":</strong> " . iptools_e($value) . "</li>";
     }
     echo "</ul>";
 
@@ -165,7 +165,7 @@ if ($error !== null) {
             if ($smaller_subnet - $original_subnet > 50) {
                 $formatted = gmp_strval($num_subnets);
             }
-            echo "<tr><td>/" . (int)$smaller_subnet . "</td><td>" . htmlspecialchars($formatted) . "</td></tr>";
+            echo "<tr><td>/" . (int)$smaller_subnet . "</td><td>" . iptools_e($formatted) . "</td></tr>";
         }
         echo "</table>";
     }
