@@ -54,7 +54,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $cmd = iptools_timeout_prefix($commandTimeout) . "ping -c 5 $escapedTarget";
                 }
 
-                $output = shell_exec($cmd . ' 2>&1');
+                $output = iptools_capture($cmd . ' 2>&1');
                 if ($output) {
                     if ($enableLogging) {
                         iptools_log('ping', $target);
@@ -73,7 +73,7 @@ iptools_page_open('ping', $nonce, 'ping.php');
 ?>
     <p class="tagline">ICMP echo — 5 packets, straight to the wire</p>
     <form method="post" action="">
-        <input type="hidden" name="csrf" value="<?php echo htmlspecialchars($csrf); ?>">
+        <input type="hidden" name="csrf" value="<?php echo iptools_e($csrf); ?>">
         <label for="domain">target host / ip</label>
         <input type="text" id="domain" name="domain" required maxlength="253" placeholder="e.g., example.com or 8.8.8.8">
         <div class="submit-container">
@@ -82,11 +82,11 @@ iptools_page_open('ping', $nonce, 'ping.php');
     </form>
 <?php
 if ($error !== null) {
-    echo "<p class='error-message'>" . htmlspecialchars($error) . "</p>";
+    echo "<p class='error-message'>" . iptools_e($error) . "</p>";
 } elseif ($output !== null) {
     echo "<div class='output-item'>";
-    echo "<span class='out-label'>ping " . htmlspecialchars($target)
-       . ($probe !== $target ? ' (' . htmlspecialchars($probe) . ')' : '') . "</span>";
+    echo "<span class='out-label'>ping " . iptools_e($target)
+       . ($probe !== $target ? ' (' . iptools_e($probe) . ')' : '') . "</span>";
     echo "<pre>" . iptools_highlight($output, 'ping') . "</pre>";
     echo "</div>";
 }

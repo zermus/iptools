@@ -18,6 +18,8 @@ $maxConcurrent       = 5;                 // Max mtr runs in flight at once, acr
 $mtrColumns          = 2000;              // Wide columns so hostnames aren't truncated
 $enableLogging       = true;              // Log queries to logs/mtr.log
 $allowPrivateTargets = false;             // Set true to permit tracing RFC1918/reserved addresses
+$burstRequests       = 3;
+$burstWindow         = 60;
 $maxRequests         = 100;               // Rate limit: max requests ...
 $timeFrame           = 3600;              // ... per this many seconds, per client IP
 $showDiagnostics     = false;             // Show setup details (paths, web user, sudoers hint) to visitors.
@@ -32,28 +34,42 @@ $mtrCommand = ($mtrUseSudo ? 'sudo -n ' : '') . escapeshellarg($mtrPath);
 // Cheap checks only: no processes are spawned for ordinary page views.
 $envErrors = [];
 
-if (!is_dir($tempDir) || !is_writable($tempDir)) {
+if (!iptools_private_dir(rtrim($tempDir, '/\\'))) {
     $envErrors[] = $showDiagnostics
-        ? 'Temporary directory (' . htmlspecialchars($tempDir) . ') is not writable.'
+        ? 'Temporary directory (' . iptools_e($tempDir) . ') is not writable.'
         : 'Temporary directory is not writable.';
-} elseif (!is_file($tempDir . '.htaccess')) {
-    // Output files must never be fetchable over HTTP (Apache; see README for Nginx)
-    @file_put_contents($tempDir . '.htaccess', "Require all denied\n");
-    @file_put_contents($tempDir . 'index.html', '');
+} else {
+    foreach (['.htaccess' => "Require all denied\n", 'index.html' => ''] as $name => $contents) {
+        $guard = iptools_state_open($tempDir . $name, 'MTR directory guard', false);
+        if ($guard === false) {
+            $envErrors[] = 'Unable to protect temporary output.';
+            break;
+        }
+        if (flock($guard, LOCK_EX)) {
+            if (fstat($guard)['size'] === 0) {
+                fwrite($guard, $contents);
+            }
+            flock($guard, LOCK_UN);
+        }
+        fclose($guard);
+    }
 }
 
 if (!@is_executable($mtrPath)) {
     $envErrors[] = $showDiagnostics
-        ? 'MTR binary not found or not executable at ' . htmlspecialchars($mtrPath) . '.'
+        ? 'MTR binary not found or not executable at ' . iptools_e($mtrPath) . '.'
         : 'MTR is not available on this server.';
 } elseif ($showDiagnostics) {
     if ($mtrUseSudo) {
+        $envErrors[] = 'Prefer cap_net_raw on mtr-packet: unprivileged timeout cannot signal root-owned '
+                     . 'sudo mtr; sudo env_reset strips COLUMNS/TERM. The numeric sudoers rule requires '
+                     . '<code>$allowPrivateTargets = false</code>.';
         // sudo -l checks the permission without running anything
         exec('sudo -n -l ' . escapeshellarg($mtrPath) . ' -rw -c 10 192.0.2.1 2>&1', $unused, $rc);
         if ($rc !== 0) {
             $envErrors[] = 'The web server user may not run MTR via sudo. Add this line via visudo:<br>'
-                         . '<code>' . htmlspecialchars(trim((string)shell_exec('whoami')))
-                         . ' ALL=(root) NOPASSWD: ' . htmlspecialchars($mtrPath) . ' ^-rw -c 10 [0-9A-Fa-f\\:.]+$</code>';
+                         . '<code>' . iptools_e(trim((string)shell_exec('whoami')))
+                         . ' ALL=(root) NOPASSWD: ' . iptools_e($mtrPath) . ' ^-rw -c 10 [0-9A-Fa-f\\:.]+$</code>';
         }
     } elseif (!shell_exec($mtrEnv . $mtrCommand . ' --version 2>/dev/null')) {
         $envErrors[] = 'MTR did not run as the web server user. Check that mtr-packet is setuid/has '
@@ -83,6 +99,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = 'Invalid or expired form token. Please resubmit.';
     } elseif (!empty($envErrors)) {
         $error = 'MTR is not available on this server.';
+    } elseif (iptools_rate_limited('mtr-burst', $burstRequests, $burstWindow, true)) {
+        $error = 'Rate limit exceeded or admission storage unavailable. Please try again later.';
     } elseif (iptools_rate_limited('mtr', $maxRequests, $timeFrame)) {
         $error = 'Rate limit exceeded. Please try again later.';
     } else {
@@ -130,8 +148,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // ===== Results page (spinner + Ajax polling) =====
             iptools_page_open('mtr', $nonce, 'mtr.php');
             ?>
-            <p class="tagline">tracing <?php echo htmlspecialchars($target);
-                echo $probe !== $target ? ' (' . htmlspecialchars($probe) . ')' : ''; ?> — live for <?php echo (int)$tracerouteTimeout; ?>s</p>
+            <p class="tagline">tracing <?php echo iptools_e($target);
+                echo $probe !== $target ? ' (' . iptools_e($probe) . ')' : ''; ?> — live for <?php echo (int)$tracerouteTimeout; ?>s</p>
             <div class="pre-wrapper">
                 <pre id="output">Loading output...</pre>
                 <div id="spinner" class="spinner"></div>
@@ -188,7 +206,7 @@ if (!empty($envErrors)) {
 ?>
     <p class="tagline">my traceroute — 10 cycles, report mode</p>
     <form method="post" action="">
-        <input type="hidden" name="csrf" value="<?php echo htmlspecialchars($csrf); ?>">
+        <input type="hidden" name="csrf" value="<?php echo iptools_e($csrf); ?>">
         <label for="domain">target host / ip</label>
         <input type="text" id="domain" name="domain" required maxlength="253" placeholder="e.g., example.com or 8.8.8.8">
         <div class="submit-container">
@@ -197,6 +215,6 @@ if (!empty($envErrors)) {
     </form>
 <?php
 if ($error !== null) {
-    echo "<p class='error-message'>" . htmlspecialchars($error) . "</p>";
+    echo "<p class='error-message'>" . iptools_e($error) . "</p>";
 }
 iptools_page_close();

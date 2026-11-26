@@ -176,7 +176,7 @@ browser through Ajax polling (every 5 seconds).
    sudo chown apache:apache /path/to/iptools/tmp     # RHEL/CentOS/Fedora
    # or
    sudo chown www-data:www-data /path/to/iptools/tmp # Debian/Ubuntu
-   sudo chmod 755 /path/to/iptools/tmp
+   sudo chmod 700 /path/to/iptools/tmp
    ```
 
 2. **Check the MTR path** with `which mtr` (typically `/usr/sbin/mtr`) and
@@ -204,6 +204,40 @@ browser through Ajax polling (every 5 seconds).
    `setcap cap_net_raw+ep /usr/sbin/mtr-packet` (adjust the binary path) instead.
 
 ### Notes
+
+- Prefer distro-supported `cap_net_raw` on `mtr-packet` rather than root-owned `sudo mtr`:
+  unprivileged `timeout` cannot reliably signal privileged processes, and
+  sudo `env_reset` strips `COLUMNS` and `TERM`. The numeric-only sudoers
+  rule requires `$allowPrivateTargets = false`.
+- POSIX runtime state requires native ownership and permission support.
+  Before upgrading, secure existing state and log files to `0600`; the
+  private fallback directory must be `0700`. Invalid files are refused.
+- Keep `tmp/` and `logs/` app-owned, non-symlink directories, not writable
+  by other users (prefer `0700`, or `0750` for an administrative read group).
+  Stop web workers before migration. Inspect ownership and file types without
+  following links; remove symlinks rather than changing their targets. Owned,
+  disposable slot/rate/MTR state can be removed while workers are stopped and
+  recreated automatically. Keep the `tmp/` directory itself for MTR. For logs
+  you need to retain, move only vetted, owned regular files into an app-owned
+  directory and set them to `0600`; do not recursively chmod unknown paths.
+  Restart and verify queries and polling after migration. No untrusted pathname
+  is chmodded automatically. Windows skips POSIX UID/mode checks: configure
+  NTFS ACLs so only the application identity and administrators can modify
+  runtime directories/files. Linux mounts must implement POSIX modes/ownership.
+- Where Apache overrides are disabled, apply equivalent server-level rules:
+  deny `logs`, `tmp`, `tests`, `.git` at any install prefix and deny
+  `iptools_common.php`, `mtr_runtime.php`, `build-release.sh` (including PATH_INFO).
+  On Nginx, place deny locations before the PHP handler, for example:
+  `location ~* /(?:logs|tmp|tests|\.git)(?:/|$) { deny all; }` and
+  `location ~ /(?:iptools_common\.php|mtr_runtime\.php|build-release\.sh)(?:/|$) { deny all; }`.
+- Forwarded protocol headers require explicit `IPTOOLS_TRUST_PROXY = true`
+  in a server-side bootstrap; enable only behind a trusted proxy that
+  overwrites incoming forwarding headers. The first protocol token is used.
+- WHOIS clients follow registry referrals over TCP. Restrict outbound access
+  with a firewall; hostname validation does not constrain referrals.
+- Combined stdout/stderr capture is capped at 512 KiB, including a truncation
+  notice. Poll log reads are also capped at 512 KiB, not a disk quota. Bounded runtime still requires a
+  working `timeout` binary, or external worker limits on other platforms.
 
 - On SELinux (RHEL) or AppArmor (Ubuntu) systems you may need policy
   adjustments if you hit permission issues.

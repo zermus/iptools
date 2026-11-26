@@ -5,7 +5,7 @@
  */
 
 function iptools_mtr_with_lock(string $tempDir, callable $callback) {
-    $lock = @fopen(rtrim($tempDir, '/\\') . '/.mtr.lock', 'c');
+    $lock = iptools_state_open(rtrim($tempDir, '/\\') . '/.mtr.lock', 'MTR admission refused');
     if ($lock === false || !@flock($lock, LOCK_EX)) {
         if (is_resource($lock)) {
             fclose($lock);
@@ -22,14 +22,28 @@ function iptools_mtr_with_lock(string $tempDir, callable $callback) {
 }
 
 function iptools_mtr_claim(string $tempDir, string $id, int $deadline): bool {
+    if (!preg_match('/^[0-9a-f]{32}$/', $id)
+        || !iptools_private_dir(rtrim($tempDir, '/\\'))) {
+        return false;
+    }
     $prefix = rtrim($tempDir, '/\\') . DIRECTORY_SEPARATOR . 'mtr_' . $id;
-    $outputHandle = @fopen($prefix . '.log', 'x');
+    $mask = umask(0077);
+    try {
+        $outputHandle = @fopen($prefix . '.log', 'x');
+    } finally {
+        umask($mask);
+    }
     if ($outputHandle === false) {
         return false;
     }
     fclose($outputHandle);
 
-    $markerHandle = @fopen($prefix . '.active', 'x');
+    $mask = umask(0077);
+    try {
+        $markerHandle = @fopen($prefix . '.active', 'x');
+    } finally {
+        umask($mask);
+    }
     if ($markerHandle === false) {
         @unlink($prefix . '.log');
         return false;
@@ -47,7 +61,12 @@ function iptools_mtr_claim(string $tempDir, string $id, int $deadline): bool {
 }
 
 function iptools_mtr_deadline(string $marker) {
-    $value = @file_get_contents($marker);
+    $fh = iptools_state_open($marker, 'MTR marker read refused');
+    if ($fh === false) {
+        return false;
+    }
+    $value = stream_get_contents($fh, 64);
+    fclose($fh);
     if ($value === false || !preg_match('/^\d+$/', $value)) {
         return false;
     }
@@ -109,9 +128,20 @@ function iptools_mtr_launch(string $command, string $tempDir, string $id): bool 
     if (!preg_match('/^[0-9a-f]{32}$/', $id)) {
         return false;
     }
+    if (!iptools_private_dir(rtrim($tempDir, '/\\'))) {
+        return false;
+    }
     $prefix = rtrim($tempDir, '/\\') . DIRECTORY_SEPARATOR . 'mtr_' . $id;
     $output = $prefix . '.log';
-    $wrapper = '(' . $command . ') > ' . escapeshellarg($output)
+    $fh = iptools_state_open($output, 'MTR launch refused');
+    if ($fh === false || file_exists($prefix . '.done') || is_link($prefix . '.done')) {
+        if (is_resource($fh)) {
+            fclose($fh);
+        }
+        return false;
+    }
+    fclose($fh);
+    $wrapper = 'umask 077; (' . $command . ') > ' . escapeshellarg($output)
         . ' 2>&1; touch -- ' . escapeshellarg($prefix . '.done');
     $lines = [];
     $status = 1;
@@ -146,7 +176,12 @@ function iptools_mtr_status(string $tempDir, string $id): array {
         if (!is_file($prefix . '.log')) {
             return ['status' => 'missing', 'output' => ''];
         }
-        $output = @file_get_contents($prefix . '.log');
+        $fh = iptools_state_open($prefix . '.log', 'MTR output read refused');
+        if ($fh === false) {
+            return ['status' => 'error', 'output' => ''];
+        }
+        $output = stream_get_contents($fh, 524288);
+        fclose($fh);
         if ($output === false) {
             return ['status' => 'error', 'output' => ''];
         }

@@ -23,10 +23,14 @@ function iptools_start_session(): bool {
 
     session_name('IPTOOLSSESSID');
     ini_set('session.use_strict_mode', '1');
+    ini_set('session.use_only_cookies', '1');
     $https = isset($_SERVER['HTTPS'])
         && $_SERVER['HTTPS'] !== ''
         && strtolower((string)$_SERVER['HTTPS']) !== 'off';
-    $https = $https || strcasecmp($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '', 'https') === 0;
+    if (defined('IPTOOLS_TRUST_PROXY') && IPTOOLS_TRUST_PROXY === true) {
+        $proto = trim(explode(',', $_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')[0]);
+        $https = $https || strcasecmp($proto, 'https') === 0;
+    }
     session_set_cookie_params([
         'httponly' => true,
         'samesite' => 'Lax',
@@ -58,6 +62,10 @@ function iptools_boot(): array {
     return [$nonce, $_SESSION['iptools_csrf']];
 }
 
+function iptools_e($value): string {
+    return htmlspecialchars((string)$value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+}
+
 function iptools_post_string(string $key): string {
     return isset($_POST[$key]) && is_string($_POST[$key]) ? $_POST[$key] : '';
 }
@@ -67,12 +75,63 @@ function iptools_csrf_ok(): bool {
     return $token !== '' && hash_equals($_SESSION['iptools_csrf'] ?? '', $token);
 }
 
-function iptools_state_dir(): string {
-    $preferred = __DIR__ . '/tmp';
-    return is_dir($preferred) && is_writable($preferred) ? $preferred : sys_get_temp_dir();
+function iptools_private_dir(string $dir, bool $strict = false): bool {
+    clearstatcache(true, $dir);
+    $stat = @lstat($dir);
+    if (!$stat || ($stat['mode'] & 0170000) !== 0040000 || !is_writable($dir)) {
+        return false;
+    }
+    // Reject symlinks in ancestors too, before opening any child pathname.
+    $parent = $dir;
+    while (true) {
+        if (is_link($parent)) {
+            return false;
+        }
+        $next = dirname($parent);
+        if ($next === $parent) {
+            break;
+        }
+        $parent = $next;
+    }
+    return PHP_OS_FAMILY === 'Windows'
+        || (($stat['mode'] & 0022) === 0
+            && (!$strict || ($stat['mode'] & 0777) === 0700)
+            && (!function_exists('posix_geteuid') || $stat['uid'] === posix_geteuid()));
 }
 
-function iptools_state_open(string $file, string $context) {
+function iptools_state_dir(): string {
+    $preferred = __DIR__ . '/tmp';
+    if (file_exists($preferred) || is_link($preferred)) {
+        if (!iptools_private_dir($preferred)) {
+            throw new RuntimeException('IPTools state directory is unsafe or unavailable.');
+        }
+        return $preferred;
+    }
+    $uid = function_exists('posix_geteuid') ? posix_geteuid() : get_current_user();
+    $dir = sys_get_temp_dir() . '/iptools_'
+        . substr(hash('sha256', __DIR__ . ':' . $uid), 0, 16);
+    if (!file_exists($dir) && !is_link($dir)) {
+        $mask = umask(0077);
+        try {
+            @mkdir($dir, 0700);
+        } finally {
+            umask($mask);
+        }
+    }
+    if (!iptools_private_dir($dir, true)) {
+        throw new RuntimeException('Private IPTools state directory unavailable.');
+    }
+    return $dir;
+}
+
+function iptools_state_open(string $file, string $context, bool $private = true) {
+    clearstatcache(true, $file);
+    $existing = @lstat($file);
+    if (!iptools_private_dir(dirname($file)) || is_link($file)
+        || ($existing && ($existing['mode'] & 0170000) !== 0100000)) {
+        error_log($context . ': cannot open unsafe state path');
+        return false;
+    }
     $mask = umask(0077);
     try {
         $fh = @fopen($file, 'c+');
@@ -85,7 +144,13 @@ function iptools_state_open(string $file, string $context) {
         return false;
     }
     clearstatcache(true, $file);
-    if (!@chmod($file, 0600) || (fileperms($file) & 0777) !== 0600) {
+    $stat = fstat($fh);
+    $path = @lstat($file);
+    if (!$stat || !$path || is_link($file) || ($stat['mode'] & 0170000) !== 0100000
+        || (PHP_OS_FAMILY !== 'Windows'
+            && ($stat['ino'] !== $path['ino'] || $stat['dev'] !== $path['dev']))
+        || (PHP_OS_FAMILY !== 'Windows' && (($private ? ($stat['mode'] & 0777) !== 0600 : ($stat['mode'] & 0022) !== 0)
+            || (function_exists('posix_geteuid') && $stat['uid'] !== posix_geteuid())))) {
         error_log($context . ': cannot secure state file permissions');
         fclose($fh);
         return false;
@@ -94,8 +159,14 @@ function iptools_state_open(string $file, string $context) {
 }
 
 function iptools_probe_acquire(int $maxConcurrent) {
+    try {
+        $dir = iptools_state_dir();
+    } catch (RuntimeException $error) {
+        error_log('Probe admission refused: invalid state directory');
+        return false;
+    }
     for ($i = 0; $i < $maxConcurrent; $i++) {
-        $fh = iptools_state_open(iptools_state_dir() . '/.probe_slot_' . $i, 'Probe admission refused');
+        $fh = iptools_state_open($dir . '/.probe_slot_' . $i, 'Probe admission refused');
         if ($fh === false) {
             return false;
         }
@@ -124,7 +195,7 @@ function iptools_probe_release($slot): void {
  * limiter, this cannot be bypassed by discarding the session cookie.
  * Returns true when the limit is exceeded (the request is NOT recorded).
  */
-function iptools_rate_limited(string $tool, int $maxRequests, int $timeFrame): bool {
+function iptools_rate_limited(string $tool, int $maxRequests, int $timeFrame, bool $failClosed = false): bool {
     $ip  = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
     $bin = @inet_pton($ip);
     if ($bin !== false && strlen($bin) === 16) {
@@ -138,16 +209,22 @@ function iptools_rate_limited(string $tool, int $maxRequests, int $timeFrame): b
         }
     }
     $key  = hash('sha256', $ip); // don't store raw IPs in the shared temp file
-    $file = iptools_state_dir() . '/iptools_ratelimit_' . preg_replace('/[^a-z0-9_-]/i', '', $tool) . '.json';
+    try {
+        $dir = iptools_state_dir();
+    } catch (RuntimeException $error) {
+        error_log('Rate limiting unavailable: invalid state directory');
+        return $failClosed;
+    }
+    $file = $dir . '/iptools_ratelimit_' . preg_replace('/[^a-z0-9_-]/i', '', $tool) . '.json';
 
     $fh = iptools_state_open($file, 'Rate limiting is off');
     if ($fh === false) {
-        return false;
+        return $failClosed;
     }
     try {
         if (!@flock($fh, LOCK_EX)) {
             error_log('Rate limiting is off: cannot lock state file');
-            return false;
+            return $failClosed;
         }
         $raw = stream_get_contents($fh);
         $data = is_string($raw) ? json_decode($raw, true) : null;
@@ -174,7 +251,7 @@ function iptools_rate_limited(string $tool, int $maxRequests, int $timeFrame): b
         $encoded = json_encode($data);
         if (!ftruncate($fh, 0) || !rewind($fh) || fwrite($fh, $encoded) !== strlen($encoded) || !fflush($fh)) {
             error_log('Rate limiting is off: cannot write state file');
-            return false;
+            return $failClosed;
         }
         return $limited;
     } finally {
@@ -274,6 +351,17 @@ function iptools_is_public_ip(string $ip): bool {
     // Ranges older PHP versions don't treat as private/reserved
     $blocked = [
         '::/96',
+        '::ffff:0:0:0/96',
+        '192.0.2.0/24',
+        '198.51.100.0/24',
+        '203.0.113.0/24',
+        '100::/64',
+        '2001:2::/48',
+        '2001:10::/28',
+        '2001:20::/28',
+        'fec0::/10',
+        '3fff::/20',
+        '5f00::/16',
         '100.64.0.0/10',  // carrier-grade NAT
         '192.0.0.0/24',   // IETF protocol assignments
         '198.18.0.0/15',  // benchmarking
@@ -330,6 +418,41 @@ function iptools_resolve_target(string $target, bool $allowPrivate) {
     return $ips[0];
 }
 
+function iptools_capture(string $command, int $maxBytes = 524288): string {
+    $maxBytes = max(0, $maxBytes);
+    if (!function_exists('proc_open')) {
+        return '';
+    }
+    $process = @proc_open($command, [0 => ['pipe', 'r'], 1 => ['pipe', 'w'],
+        2 => ['redirect', 1]], $pipes);
+    if (!is_resource($process)) {
+        return '';
+    }
+    fclose($pipes[0]);
+    $output = '';
+    $truncated = false;
+    try {
+        while (!feof($pipes[1])) {
+            $chunk = fread($pipes[1], 8192);
+            if ($chunk === false) {
+                break;
+            }
+            $remaining = $maxBytes - strlen($output);
+            $truncated = $truncated || strlen($chunk) > $remaining;
+            $output .= substr($chunk, 0, $remaining);
+        }
+    } finally {
+        fclose($pipes[1]);
+        proc_close($process);
+    }
+    if ($truncated) {
+        $notice = "\n[output truncated]\n";
+        return substr($output, 0, max(0, $maxBytes - strlen($notice)))
+            . substr($notice, 0, $maxBytes);
+    }
+    return $output;
+}
+
 /**
  * Shell prefix that kills a command after $seconds, so a hung whois
  * server or black-holed traceroute can't pin a PHP worker. Empty when
@@ -341,7 +464,7 @@ function iptools_timeout_prefix(int $seconds): string {
     }
     foreach (['/usr/bin/timeout', '/bin/timeout'] as $bin) {
         if (@is_executable($bin)) {
-            return escapeshellarg($bin) . ' ' . (int)$seconds . ' ';
+            return escapeshellarg($bin) . ' -k 5 ' . (int)$seconds . ' ';
         }
     }
     return '';
@@ -354,14 +477,37 @@ function iptools_timeout_prefix(int $seconds): string {
  */
 function iptools_log(string $tool, string $message): void {
     $dir = __DIR__ . '/logs';
-    if (!is_dir($dir)) {
-        @mkdir($dir, 0750, true);
-        @file_put_contents($dir . '/.htaccess', "Require all denied\n");
-        @file_put_contents($dir . '/index.html', '');
+    if (!file_exists($dir) && !is_link($dir)) {
+        @mkdir($dir, 0750);
+    }
+    if (!iptools_private_dir($dir)) {
+        error_log('Query logging is off: unsafe log directory');
+        return;
+    }
+    foreach (['.htaccess' => "Require all denied\n", 'index.html' => ''] as $name => $contents) {
+        $guard = iptools_state_open($dir . '/' . $name, 'Query log guard', false);
+        if ($guard === false) {
+            return;
+        }
+        if (flock($guard, LOCK_EX)) {
+            if (fstat($guard)['size'] === 0) {
+                fwrite($guard, $contents);
+            }
+            flock($guard, LOCK_UN);
+        }
+        fclose($guard);
     }
     $tool  = preg_replace('/[^a-z0-9_-]/i', '', $tool);
     $entry = date('Y-m-d H:i:s') . ' - ' . ($_SERVER['REMOTE_ADDR'] ?? '-') . ' - ' . $message . "\n";
-    @file_put_contents($dir . '/' . $tool . '.log', $entry, FILE_APPEND | LOCK_EX);
+    $fh = iptools_state_open($dir . '/' . $tool . '.log', 'Query logging is off');
+    if ($fh !== false) {
+        if (flock($fh, LOCK_EX)) {
+            fseek($fh, 0, SEEK_END);
+            fwrite($fh, $entry);
+            flock($fh, LOCK_UN);
+        }
+        fclose($fh);
+    }
 }
 
 /**
@@ -441,18 +587,14 @@ function iptools_highlight(string $raw, string $tool): string {
         ];
     }
 
-    // ENT_SUBSTITUTE: registries often answer in Latin-1; without it PHP < 8.1
-    // returns '' for invalid UTF-8 and the whole line disappears
-    $flags = ENT_QUOTES | ENT_SUBSTITUTE;
-
     if (!isset($rulesets[$tool])) {
-        return htmlspecialchars($raw, $flags, 'UTF-8');
+        return iptools_e($raw);
     }
 
     $rules = $rulesets[$tool];
     $out   = [];
     foreach (preg_split('/\r\n|\r|\n/', $raw) as $line) {
-        $esc     = htmlspecialchars($line, $flags, 'UTF-8');
+        $esc     = iptools_e($line);
         $wrapped = false;
         foreach ($rules['line'] as $r) {
             if (preg_match('~(?:' . $r[0] . ')~' . $r[1], $line)) {
@@ -495,7 +637,7 @@ function iptools_page_open(string $title, string $nonce, string $active = ''): v
         'ula_generator.php'   => 'ula',
         'subnets.php'         => 'cheatsheet',
     ];
-    $titleEsc = htmlspecialchars($title);
+    $titleEsc = iptools_e($title);
     echo "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n";
     echo "<meta charset=\"UTF-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n";
     echo "<title>iptools :: {$titleEsc}</title>\n";

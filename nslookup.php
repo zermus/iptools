@@ -69,10 +69,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $error = 'Failed to process the IPv6 address.';
                         } else {
                             $hex        = bin2hex($packed);
-                            $queryValue = implode('.', str_split(strrev($hex), 1)) . '.ip6.arpa';
+                            $queryValue = implode('.', str_split(strrev($hex), 1)) . '.ip6.arpa.';
                         }
                     } else {
-                        $queryValue = implode('.', array_reverse(explode('.', $target))) . '.in-addr.arpa';
+                        $queryValue = implode('.', array_reverse(explode('.', $target))) . '.in-addr.arpa.';
                     }
                 }
 
@@ -80,8 +80,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $escapedQuery     = escapeshellarg($queryValue);
                     $escapedDnsServer = escapeshellarg($dnsServer);
                     // $queryType is whitelisted above, safe to interpolate
-                    $output = shell_exec(iptools_timeout_prefix($commandTimeout)
-                        . "nslookup -type={$queryType} {$escapedQuery} {$escapedDnsServer} 2>&1");
+                    $searchOption = PHP_OS_FAMILY === 'Windows' ? '' : '-nosearch ';
+                    $output = iptools_capture(iptools_timeout_prefix($commandTimeout)
+                        . "nslookup {$searchOption}-type={$queryType} {$escapedQuery} {$escapedDnsServer} 2>&1");
 
                     if ($output) {
                         if ($enableLogging) {
@@ -100,13 +101,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 iptools_page_open('nslookup', $nonce, 'nslookup.php');
 ?>
-    <p class="tagline">DNS interrogation via <?php echo htmlspecialchars($dnsServer); ?></p>
+    <p class="tagline">DNS interrogation via <?php echo iptools_e($dnsServer); ?></p>
     <form action="" method="post">
-        <input type="hidden" name="csrf" value="<?php echo htmlspecialchars($csrf); ?>">
+        <input type="hidden" name="csrf" value="<?php echo iptools_e($csrf); ?>">
         <label for="queryType">query type</label>
         <select name="queryType" id="queryType">
             <?php foreach ($queryTypes as $value => $label) { ?>
-                <option value="<?php echo htmlspecialchars($value); ?>"<?php echo $value === $queryType ? ' selected' : ''; ?>><?php echo htmlspecialchars($label); ?></option>
+                <option value="<?php echo iptools_e($value); ?>"<?php echo $value === $queryType ? ' selected' : ''; ?>><?php echo iptools_e($label); ?></option>
             <?php } ?>
         </select>
 
@@ -119,10 +120,10 @@ iptools_page_open('nslookup', $nonce, 'nslookup.php');
     </form>
 <?php
 if ($error !== null) {
-    echo "<p class='error-message'>" . htmlspecialchars($error) . "</p>";
+    echo "<p class='error-message'>" . iptools_e($error) . "</p>";
 } elseif ($output !== null) {
     echo "<div class='output-item'>";
-    echo "<span class='out-label'>nslookup -type=" . htmlspecialchars($queryType) . " " . htmlspecialchars($target) . "</span>";
+    echo "<span class='out-label'>nslookup -type=" . iptools_e($queryType) . " " . iptools_e($target) . "</span>";
     echo "<pre>" . iptools_highlight($output, 'nslookup') . "</pre>";
     echo "</div>";
 }

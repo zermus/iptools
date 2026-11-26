@@ -25,9 +25,9 @@ iptools_page_open('iptools', $nonce, 'index.php');
     <div class="tool-grid">
         <?php foreach ($tools as $tool) {
             list($file, $name, $desc) = $tool;
-            echo "<a class='tool-card' href='" . htmlspecialchars($file) . "'>"
-               . "<span class='tool-name'>" . htmlspecialchars($name) . "</span>"
-               . "<span class='tool-desc'>" . htmlspecialchars($desc) . "</span>"
+            echo "<a class='tool-card' href='" . iptools_e($file) . "'>"
+               . "<span class='tool-name'>" . iptools_e($name) . "</span>"
+               . "<span class='tool-desc'>" . iptools_e($desc) . "</span>"
                . "</a>\n";
         } ?>
     </div>
